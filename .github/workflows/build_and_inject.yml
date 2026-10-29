@@ -1,0 +1,136 @@
+name: Build Tweak & Inject IPA
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "Direct URL to decrypted Telegram IPA (optional if ipa/ folder is used)"
+        required: false
+        type: string
+
+jobs:
+  build:
+    name: Build Tweak
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Theos
+        uses: waruhachi/theos-action@v2.4.6
+        with:
+          theos-src: 'waruhachi/theos'
+          theos-branch: 'main'
+          sdks-src: 'waruhachi/sdks'
+          sdks-branch: 'main'
+
+      - name: Compile Tweak
+        shell: bash
+        run: |
+          make clean package FINALPACKAGE=1 STRIP=0 THEOS_PACKAGE_SCHEME=rootless
+          mkdir -p build_output
+          cp -r packages/*.deb build_output/ 2>/dev/null || true
+          cp -r .theos/obj/debug/*.dylib build_output/ 2>/dev/null || cp -r .theos/obj/*.dylib build_output/ 2>/dev/null || true
+          cp -r Tweak.bundle build_output/ 2>/dev/null || true
+
+      - name: Upload Tweak Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tweak-binaries
+          path: build_output/
+
+  inject:
+    name: Inject into IPA
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Tweak Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tweak-binaries
+          path: tweak_build
+
+      - name: Set up Python & Pyzule
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install --force-reinstall https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
+
+      - name: Locate Target IPA
+        id: find_ipa
+        run: |
+          TARGET_IPA=""
+          
+          # Check local directory ipa/
+          if [ -d "ipa" ]; then
+            for f in ipa/Telegram.ios ipa/Telegram.ipa ipa/*.ipa ipa/*.ios; do
+              if [ -f "$f" ]; then
+                TARGET_IPA="$f"
+                echo "Found local IPA: $TARGET_IPA"
+                break
+              fi
+            done
+          fi
+
+          # Check root directory for ipa
+          if [ -z "$TARGET_IPA" ]; then
+            for f in Telegram.ios Telegram.ipa *.ipa; do
+              if [ -f "$f" ]; then
+                TARGET_IPA="$f"
+                echo "Found root IPA: $TARGET_IPA"
+                break
+              fi
+            done
+          fi
+
+          # Check workflow_dispatch URL
+          if [ -z "$TARGET_IPA" ] && [ -n "${{ inputs.ipa_url }}" ]; then
+            echo "Downloading from URL..."
+            curl -L -A "Mozilla/5.0" -o downloaded.ipa "${{ inputs.ipa_url }}"
+            TARGET_IPA="downloaded.ipa"
+          fi
+
+          if [ -n "$TARGET_IPA" ] && [ -f "$TARGET_IPA" ]; then
+            # Ensure extension is .ipa for pyzule
+            if [[ "$TARGET_IPA" == *.ios ]]; then
+              cp "$TARGET_IPA" input.ipa
+              TARGET_IPA="input.ipa"
+            fi
+            echo "target_ipa=$TARGET_IPA" >> "$GITHUB_OUTPUT"
+            echo "has_ipa=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No IPA file found in ipa/Telegram.ios, ipa/*.ipa, or URL input."
+            echo "has_ipa=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Inject Tweak and Package IPA
+        if: steps.find_ipa.outputs.has_ipa == 'true'
+        run: |
+          INPUT_IPA="${{ steps.find_ipa.outputs.target_ipa }}"
+          echo "Injecting into $INPUT_IPA..."
+
+          DEB_FILE=$(ls tweak_build/*.deb 2>/dev/null | head -n1 || true)
+          DYLIB_FILE=$(ls tweak_build/*.dylib 2>/dev/null | head -n1 || true)
+
+          mkdir -p output
+
+          if [ -n "$DEB_FILE" ]; then
+            echo "Injecting via DEB: $DEB_FILE"
+            pyzule -i "$INPUT_IPA" -o "output/Telegram-Tweak.ipa" -f "$DEB_FILE"
+          elif [ -n "$DYLIB_FILE" ]; then
+            echo "Injecting via dylib: $DYLIB_FILE"
+            pyzule -i "$INPUT_IPA" -o "output/Telegram-Tweak.ipa" -f "$DYLIB_FILE" -f "tweak_build/Tweak.bundle"
+          fi
+
+      - name: Upload Injected IPA
+        if: steps.find_ipa.outputs.has_ipa == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Telegram-Tweak-IPA
+          path: output/*.ipa

@@ -1,0 +1,6 @@
+Package: com.tweak.telegram
+Name: Tweak
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Custom Tweak for Telegram iOS
+Section: Tweaks
