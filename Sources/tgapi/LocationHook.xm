@@ -37,6 +37,7 @@ bool shouldFakeLocation() {
 }
 
 + (instancetype)shared {
+	static dispatch_once_t token;
 	static TweakFakeLocationManager *instance;
 	dispatch_once(&token, ^{
 		instance = [[TweakFakeLocationManager alloc] init];
