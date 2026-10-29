@@ -12,6 +12,15 @@ on:
         default: ""
         required: false
         type: string
+      upload_method:
+        description: "Where to upload the built IPA"
+        default: "artifacts"
+        required: true
+        type: choice
+        options:
+          - artifacts
+          - filebin
+          - both
 
 jobs:
   build:
@@ -34,7 +43,7 @@ jobs:
 
       - name: Install build & injection tools
         run: |
-          brew install make dpkg ldid wget
+          brew install make dpkg ldid wget zip unzip
           echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
           python3 -m pip install --upgrade --break-system-packages \
               git+https://github.com/asdfzxcvbn/pyzule-rw.git
@@ -105,6 +114,12 @@ jobs:
 
           echo "have_ipa=true" >> "$GITHUB_OUTPUT"
 
+      - name: Strip IPA (Remove PlugIns and AppExtensions for LiveContainer / Sideloading)
+        if: ${{ steps.ipa.outputs.have_ipa == 'true' }}
+        run: |
+          chmod +x Tools/strip-ipa.sh
+          Tools/strip-ipa.sh "${{ github.workspace }}/target.ipa"
+
       - name: Inject Tweak into IPA (Cyan / Pyzule)
         if: ${{ steps.ipa.outputs.have_ipa == 'true' }}
         run: |
@@ -130,10 +145,42 @@ jobs:
 
           echo "OUT_IPA=$OUT" >> $GITHUB_ENV
 
-      - name: Upload Telegram-Tweak.ipa artifact
+      - name: Verify and ensure clean IPA structure
         if: ${{ steps.ipa.outputs.have_ipa == 'true' }}
+        run: |
+          cd "$(dirname "$OUT_IPA")"
+          rm -rf Payload
+          unzip -q "$(basename "$OUT_IPA")"
+          find Payload -name '*.appex' -type d -prune -exec rm -rf {} +
+          rm -rf Payload/*.app/PlugIns Payload/*.app/Watch Payload/*.app/WatchKit Payload/*.app/com.apple.WatchPlaceholder
+          rm -f "$(basename "$OUT_IPA")"
+          zip -qry "$(basename "$OUT_IPA")" Payload
+          rm -rf Payload
+          echo "Final IPA verified and cleaned."
+
+      - name: Upload Telegram-Tweak.ipa artifact
+        if: ${{ steps.ipa.outputs.have_ipa == 'true' && (inputs.upload_method == 'artifacts' || inputs.upload_method == 'both' || github.event_name != 'workflow_dispatch') }}
         uses: actions/upload-artifact@v4
         with:
           name: Telegram-Tweak-IPA
           path: ${{ env.OUT_IPA }}
           if-no-files-found: error
+
+      - name: Upload IPA to filebin.net
+        if: ${{ steps.ipa.outputs.have_ipa == 'true' && (inputs.upload_method == 'filebin' || inputs.upload_method == 'both') }}
+        run: |
+          BIN="telegram-tweak-${{ github.run_id }}-${{ github.run_attempt }}"
+          FILENAME=$(basename "$OUT_IPA")
+          curl -fsS -X POST \
+               -H "Content-Type: application/octet-stream" \
+               --data-binary "@${OUT_IPA}" \
+               "https://filebin.net/${BIN}/${FILENAME}" >/dev/null
+
+          DOWNLOAD_URL="https://filebin.net/${BIN}/${FILENAME}"
+          echo "Uploaded to: ${DOWNLOAD_URL}"
+          {
+            echo "### 📦 filebin.net download"
+            echo "- **File:** ${FILENAME}"
+            echo "- **URL:** ${DOWNLOAD_URL}"
+            echo "- _Filebin auto-deletes bins after a period of inactivity — download promptly._"
+          } >> "$GITHUB_STEP_SUMMARY"
