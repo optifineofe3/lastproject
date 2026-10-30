@@ -13,6 +13,7 @@
 + (NSString *)ensureVideoExtension:(NSString *)path;
 + (void)noteOpenedCandidatePath:(NSString *)path;
 + (NSString *)lastOpenedVideoPath;
++ (NSString *)currentActivePlayingVideoPath;
 
 - (void)handleButtonTap:(id)sender;
 - (void)handleInstantVideoDoubleTap:(UITapGestureRecognizer *)gesture;

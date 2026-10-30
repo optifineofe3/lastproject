@@ -89,6 +89,20 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
     }
 }
 
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    NSString *className = NSStringFromClass([self class]);
+    if ([className containsString:@"InstantVideo"] || [className containsString:@"OverlayInstantVideoNode"]) {
+        UIView *btn = [self.view viewWithTag:998833];
+        if (btn && !btn.hidden && btn.alpha > 0.05 && btn.userInteractionEnabled) {
+            CGPoint btnPoint = [self.view convertPoint:point toView:btn];
+            if ([btn pointInside:btnPoint withEvent:event]) {
+                return btn;
+            }
+        }
+    }
+    return %orig;
+}
+
 %new
 - (void)__handleSettingsTabLongPress:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateBegan) {
@@ -314,6 +328,88 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
     }
 }
 
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    %orig;
+    UIView *v = [(ASDisplayNode *)self view];
+    UIView *btn = [v viewWithTag:998811] ?: [v.window viewWithTag:998811];
+    if (btn && [scrollView isKindOfClass:[UIScrollView class]]) {
+        CGFloat distanceFromEquilibrium = scrollView.contentOffset.y - scrollView.contentSize.height / 3.0;
+        CGFloat transition = 1.0 - fmin(1.0, fmax(0.0, fabs(distanceFromEquilibrium) / 50.0));
+        btn.alpha = transition;
+    }
+}
+
+%end
+
+%end
+
+%group DisplayViewGroup
+
+@interface _ASDisplayView : UIView
+@end
+
+%hook _ASDisplayView
+
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *btn = [self viewWithTag:998833];
+    if (btn && !btn.hidden && btn.alpha > 0.05 && btn.userInteractionEnabled) {
+        CGPoint btnPoint = [self convertPoint:point toView:btn];
+        if ([btn pointInside:btnPoint withEvent:event]) {
+            return btn;
+        }
+    }
+    return %orig;
+}
+
+%end
+
+%end
+
+%group InstantVideoGroup
+
+@interface ChatMessageInteractiveInstantVideoNode : ASDisplayNode
+@end
+
+%hook ChatMessageInteractiveInstantVideoNode
+
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *btn = [self.view viewWithTag:998833];
+    if (btn && !btn.hidden && btn.alpha > 0.05 && btn.userInteractionEnabled) {
+        CGPoint btnPoint = [self.view convertPoint:point toView:btn];
+        if ([btn pointInside:btnPoint withEvent:event]) {
+            return btn;
+        }
+    }
+    return %orig;
+}
+
+%end
+
+%end
+
+%group TapGestureGroup
+
+@interface TapLongTapOrDoubleTapGestureRecognizer : UIGestureRecognizer
+@end
+
+%hook TapLongTapOrDoubleTapGestureRecognizer
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UITouch *touch = [touches anyObject];
+    if (touch && self.view) {
+        CGPoint loc = [touch locationInView:self.view];
+        UIView *btn = [self.view viewWithTag:998833] ?: [self.view viewWithTag:998811];
+        if (btn && !btn.hidden && btn.alpha > 0.05) {
+            CGPoint btnLoc = [self.view convertPoint:loc toView:btn];
+            if ([btn pointInside:btnLoc withEvent:event]) {
+                self.state = UIGestureRecognizerStateFailed;
+                return;
+            }
+        }
+    }
+    %orig;
+}
+
 %end
 
 %end
@@ -360,6 +456,27 @@ static void hook() {
         }
         if (galleryNodeClass) {
             %init(GalleryNodeGroup, GalleryControllerNode = galleryNodeClass);
+        }
+
+        Class displayViewClass = objc_getClass("_ASDisplayView");
+        if (displayViewClass) {
+            %init(DisplayViewGroup, _ASDisplayView = displayViewClass);
+        }
+
+        Class instantVideoClass = objc_getClass("ChatMessageInteractiveInstantVideoNode.ChatMessageInteractiveInstantVideoNode");
+        if (!instantVideoClass) {
+            instantVideoClass = objc_getClass("_TtC41ChatMessageInteractiveInstantVideoNode37ChatMessageInteractiveInstantVideoNode");
+        }
+        if (instantVideoClass) {
+            %init(InstantVideoGroup, ChatMessageInteractiveInstantVideoNode = instantVideoClass);
+        }
+
+        Class tapGestureClass = objc_getClass("Display.TapLongTapOrDoubleTapGestureRecognizer");
+        if (!tapGestureClass) {
+            tapGestureClass = objc_getClass("_TtC7Display37TapLongTapOrDoubleTapGestureRecognizer");
+        }
+        if (tapGestureClass) {
+            %init(TapGestureGroup, TapLongTapOrDoubleTapGestureRecognizer = tapGestureClass);
         }
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{

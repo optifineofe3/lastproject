@@ -6,18 +6,52 @@
 #import <sys/stat.h>
 #import <fcntl.h>
 #import <unistd.h>
+#import <pthread.h>
 
 @interface MediaSaverButton : UIButton
 @property (nonatomic, weak) UIViewController *targetController;
+@property (nonatomic, weak) id targetNode;
 @end
 
 @implementation MediaSaverButton
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    CGRect expanded = CGRectInset(self.bounds, -10.0, -10.0);
+    return CGRectContainsPoint(expanded, point);
+}
 @end
 
+#define MAX_TRACKED_FDS 4096
+
 static int (*orig_open)(const char *path, int oflag, ...);
+static int (*orig_close)(int fd);
+static ssize_t (*orig_read)(int fd, void *buf, size_t nbyte);
+static ssize_t (*orig_pread)(int fd, void *buf, size_t nbyte, off_t offset);
+
+static char *fd_to_path[MAX_TRACKED_FDS];
+static uint8_t fd_is_video[MAX_TRACKED_FDS];
+static pthread_mutex_t fd_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static char last_played_video_path[1024] = {0};
+static double last_played_video_time = 0;
+static pthread_mutex_t played_video_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static NSMutableArray<NSString *> *openedVideoPaths = nil;
 static id openedVideoPathsLock = nil;
+
+static void recordPlayingVideo(const char *path) {
+    if (!path || path[0] == '\0') return;
+    pthread_mutex_lock(&played_video_mutex);
+    strlcpy(last_played_video_path, path, sizeof(last_played_video_path));
+    last_played_video_time = CFAbsoluteTimeGetCurrent();
+    pthread_mutex_unlock(&played_video_mutex);
+}
+
+static NSString *getCurrentPlayingVideoPath(void) {
+    pthread_mutex_lock(&played_video_mutex);
+    NSString *p = (last_played_video_path[0] != '\0') ? [NSString stringWithUTF8String:last_played_video_path] : nil;
+    pthread_mutex_unlock(&played_video_mutex);
+    return p;
+}
 
 static BOOL isVideoFile(NSString *path) {
     if (!path || path.length == 0) return NO;
@@ -34,14 +68,24 @@ static BOOL isVideoFile(NSString *path) {
     
     struct stat st;
     if (fstat(fd, &st) == 0 && st.st_size >= 40 * 1024) {
-        char header[12];
-        ssize_t n = pread(fd, header, 12, 0);
-        close(fd);
-        if (n >= 8 && memcmp(header + 4, "ftyp", 4) == 0) {
-            return YES;
+        char header[64];
+        ssize_t n = orig_pread ? orig_pread(fd, header, sizeof(header), 0) : pread(fd, header, sizeof(header), 0);
+        if (orig_close) orig_close(fd); else close(fd);
+        if (n >= 8) {
+            if (memcmp(header + 4, "ftyp", 4) == 0 ||
+                memcmp(header + 4, "moov", 4) == 0 ||
+                memcmp(header + 4, "wide", 4) == 0 ||
+                memcmp(header, "\x1A\x45\xDF\xA3", 4) == 0) {
+                return YES;
+            }
+            for (int i = 0; i <= (int)n - 4 && i <= 32; i++) {
+                if (memcmp(header + i, "ftyp", 4) == 0 || memcmp(header + i, "moov", 4) == 0) {
+                    return YES;
+                }
+            }
         }
     } else {
-        close(fd);
+        if (orig_close) orig_close(fd); else close(fd);
     }
     return NO;
 }
@@ -58,29 +102,115 @@ static int hook_open(const char *path, int oflag, ...) {
         fd = orig_open ? orig_open(path, oflag) : open(path, oflag);
     }
     
-    if (fd >= 0 && path != NULL) {
-        if ((oflag & (O_WRONLY | O_RDWR)) == 0) {
-            const char *dot = strrchr(path, '.');
-            BOOL isExtVideo = (dot && (strcasecmp(dot, ".mp4") == 0 || strcasecmp(dot, ".mov") == 0 || strcasecmp(dot, ".m4v") == 0));
+    if (fd >= 0 && fd < MAX_TRACKED_FDS && path != NULL) {
+        const char *dot = strrchr(path, '.');
+        BOOL isExtVideo = (dot && (strcasecmp(dot, ".mp4") == 0 || strcasecmp(dot, ".mov") == 0 || strcasecmp(dot, ".m4v") == 0));
+        BOOL isPostboxOrTemp = (strstr(path, "postbox/media") != NULL || strstr(path, "/temp/") != NULL || strstr(path, "/tmp/") != NULL);
+        
+        pthread_mutex_lock(&fd_mutex);
+        if (fd_to_path[fd]) {
+            free(fd_to_path[fd]);
+            fd_to_path[fd] = NULL;
+        }
+        if (isExtVideo || isPostboxOrTemp) {
+            fd_to_path[fd] = strdup(path);
+            fd_is_video[fd] = isExtVideo ? 1 : 0;
             if (isExtVideo) {
                 @autoreleasepool {
                     [MediaSaver noteOpenedCandidatePath:[NSString stringWithUTF8String:path]];
                 }
-            } else if (strstr(path, "postbox/media") != NULL || strstr(path, "/temp/") != NULL || strstr(path, "/tmp/") != NULL) {
-                struct stat st;
-                if (fstat(fd, &st) == 0 && st.st_size >= 40 * 1024) {
-                    char header[12];
-                    ssize_t n = pread(fd, header, 12, 0);
-                    if (n >= 8 && memcmp(header + 4, "ftyp", 4) == 0) {
-                        @autoreleasepool {
-                            [MediaSaver noteOpenedCandidatePath:[NSString stringWithUTF8String:path]];
+            }
+        } else {
+            fd_is_video[fd] = 0;
+        }
+        pthread_mutex_unlock(&fd_mutex);
+    }
+    return fd;
+}
+
+static int hook_close(int fd) {
+    if (fd >= 0 && fd < MAX_TRACKED_FDS) {
+        pthread_mutex_lock(&fd_mutex);
+        if (fd_to_path[fd]) {
+            free(fd_to_path[fd]);
+            fd_to_path[fd] = NULL;
+        }
+        fd_is_video[fd] = 0;
+        pthread_mutex_unlock(&fd_mutex);
+    }
+    return orig_close ? orig_close(fd) : close(fd);
+}
+
+static ssize_t hook_read(int fd, void *buf, size_t nbyte) {
+    ssize_t ret = orig_read ? orig_read(fd, buf, nbyte) : read(fd, buf, nbyte);
+    if (ret > 0 && fd >= 0 && fd < MAX_TRACKED_FDS) {
+        char *path = NULL;
+        uint8_t isVid = 0;
+        pthread_mutex_lock(&fd_mutex);
+        if (fd_to_path[fd]) {
+            if (fd_is_video[fd] == 0 && ret >= 8) {
+                const char *b = (const char *)buf;
+                if (memcmp(b + 4, "ftyp", 4) == 0 ||
+                    memcmp(b + 4, "moov", 4) == 0 ||
+                    memcmp(b + 4, "wide", 4) == 0 ||
+                    memcmp(b, "\x1A\x45\xDF\xA3", 4) == 0) {
+                    fd_is_video[fd] = 1;
+                } else {
+                    size_t scanLimit = (ret < 64) ? ret : 64;
+                    for (size_t i = 0; i + 4 <= scanLimit; i++) {
+                        if (memcmp(b + i, "ftyp", 4) == 0 || memcmp(b + i, "moov", 4) == 0) {
+                            fd_is_video[fd] = 1;
+                            break;
                         }
                     }
                 }
             }
+            isVid = fd_is_video[fd];
+            path = fd_to_path[fd];
+        }
+        pthread_mutex_unlock(&fd_mutex);
+        
+        if (isVid && path) {
+            recordPlayingVideo(path);
         }
     }
-    return fd;
+    return ret;
+}
+
+static ssize_t hook_pread(int fd, void *buf, size_t nbyte, off_t offset) {
+    ssize_t ret = orig_pread ? orig_pread(fd, buf, nbyte, offset) : pread(fd, buf, nbyte, offset);
+    if (ret > 0 && fd >= 0 && fd < MAX_TRACKED_FDS) {
+        char *path = NULL;
+        uint8_t isVid = 0;
+        pthread_mutex_lock(&fd_mutex);
+        if (fd_to_path[fd]) {
+            if (fd_is_video[fd] == 0 && ret >= 8) {
+                const char *b = (const char *)buf;
+                if (offset == 0 && (memcmp(b + 4, "ftyp", 4) == 0 ||
+                                    memcmp(b + 4, "moov", 4) == 0 ||
+                                    memcmp(b + 4, "wide", 4) == 0 ||
+                                    memcmp(b, "\x1A\x45\xDF\xA3", 4) == 0)) {
+                    fd_is_video[fd] = 1;
+                } else {
+                    size_t scanLimit = (ret < 64) ? ret : 64;
+                    for (size_t i = 0; i + 4 <= scanLimit; i++) {
+                        if (memcmp(b + i, "ftyp", 4) == 0 || memcmp(b + i, "moov", 4) == 0) {
+                            fd_is_video[fd] = 1;
+                            break;
+                        }
+                    }
+                }
+            }
+            isVid = fd_is_video[fd];
+            path = fd_to_path[fd];
+        }
+        pthread_mutex_unlock(&fd_mutex);
+        
+        if (isVid && path) {
+            recordPlayingVideo(path);
+        }
+    }
+    return ret;
 }
 
 __attribute__((constructor))
@@ -91,8 +221,11 @@ static void initMediaSaverHooks(void) {
         openedVideoPathsLock = [[NSObject alloc] init];
         
         rebind_symbols((struct rebinding[]){
-            {"open", (void *)hook_open, (void **)&orig_open}
-        }, 1);
+            {"open", (void *)hook_open, (void **)&orig_open},
+            {"close", (void *)hook_close, (void **)&orig_close},
+            {"read", (void *)hook_read, (void **)&orig_read},
+            {"pread", (void *)hook_pread, (void **)&orig_pread}
+        }, 4);
     });
 }
 
@@ -134,6 +267,10 @@ static void initMediaSaverHooks(void) {
         }
     }
     return nil;
+}
+
++ (NSString *)currentActivePlayingVideoPath {
+    return getCurrentPlayingVideoPath();
 }
 
 static UIImage *downloadIconImage(void) {
@@ -377,18 +514,25 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
 
 + (void)detachFromController:(UIViewController *)controller animated:(BOOL)animated {
     if (!controller || !controller.isViewLoaded) return;
-    UIView *btn = [controller.view viewWithTag:998811];
-    if (!btn) {
-        btn = [controller.view.window viewWithTag:998811];
-    }
+    UIView *btn = [controller.view viewWithTag:998811] ?: [controller.view.window viewWithTag:998811];
     if (!btn) return;
     
-    [UIView animateWithDuration:0.25 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-        btn.alpha = 0.0;
-        btn.transform = CGAffineTransformMakeScale(0.80, 0.80);
-    } completion:^(BOOL finished) {
+    if (btn.alpha <= 0.05) {
         [btn removeFromSuperview];
-    }];
+        return;
+    }
+    
+    if (animated) {
+        [UIView animateWithDuration:0.15 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+            btn.alpha = 0.0;
+            btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
+        } completion:^(BOOL finished) {
+            [btn removeFromSuperview];
+        }];
+    } else {
+        btn.alpha = 0.0;
+        [btn removeFromSuperview];
+    }
 }
 
 + (void)attachInstantVideoButtonToNode:(id)node {
@@ -406,35 +550,43 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         if (size.width < 50 || size.height < 50) return;
         
         CGFloat btnDim = 32.0;
-        CGRect targetFrame = CGRectMake(size.width - btnDim - 4.0, 4.0, btnDim, btnDim);
+        CGRect targetFrame = CGRectMake(size.width - btnDim - 6.0, 6.0, btnDim, btnDim);
         
-        UIView *existing = [v viewWithTag:998833];
-        if (existing) {
-            existing.frame = targetFrame;
+        MediaSaverButton *btn = [v viewWithTag:998833];
+        if (btn) {
+            btn.frame = targetFrame;
+            [v bringSubviewToFront:btn];
             return;
         }
         
-        MediaSaverButton *btn = [MediaSaverButton buttonWithType:UIButtonTypeCustom];
+        btn = [MediaSaverButton buttonWithType:UIButtonTypeCustom];
         btn.tag = 998833;
+        btn.targetNode = node;
         btn.frame = targetFrame;
-        btn.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:0.90];
+        btn.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:0.92];
         btn.tintColor = [UIColor whiteColor];
         btn.layer.cornerRadius = btnDim / 2.0;
         btn.layer.borderWidth = 0.0;
         btn.layer.borderColor = nil;
         btn.layer.shadowColor = [UIColor blackColor].CGColor;
-        btn.layer.shadowOpacity = 0.40;
+        btn.layer.shadowOpacity = 0.45;
         btn.layer.shadowOffset = CGSizeMake(0, 1.5);
         btn.layer.shadowRadius = 4.0;
-        btn.layer.zPosition = 9999;
+        btn.layer.zPosition = 99999;
         btn.clipsToBounds = NO;
+        btn.userInteractionEnabled = YES;
         
         [btn setImage:downloadIconImageSmall() forState:UIControlStateNormal];
         [btn addTarget:[MediaSaver shared] action:@selector(handleInstantVideoButtonTap:) forControlEvents:UIControlEventTouchUpInside];
         
+        UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleInstantVideoButtonTap:)];
+        singleTap.numberOfTapsRequired = 1;
+        [btn addGestureRecognizer:singleTap];
+        
         btn.alpha = 0.0;
         btn.transform = CGAffineTransformMakeScale(0.70, 0.70);
         [v addSubview:btn];
+        [v bringSubviewToFront:btn];
         
         [UIView animateWithDuration:0.25 delay:0.05 options:UIViewAnimationOptionCurveEaseOut animations:^{
             btn.alpha = 1.0;
@@ -465,14 +617,31 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
     }
 }
 
-- (void)handleInstantVideoButtonTap:(MediaSaverButton *)sender {
-    [UIView animateWithDuration:0.1 animations:^{
-        sender.transform = CGAffineTransformMakeScale(0.85, 0.85);
-    } completion:^(BOOL finished) {
-        [UIView animateWithDuration:0.15 animations:^{
-            sender.transform = CGAffineTransformIdentity;
+- (void)handleInstantVideoButtonTap:(id)sender {
+    MediaSaverButton *btn = nil;
+    if ([sender isKindOfClass:[MediaSaverButton class]]) {
+        btn = (MediaSaverButton *)sender;
+    } else if ([sender isKindOfClass:[UIGestureRecognizer class]]) {
+        UIView *v = [(UIGestureRecognizer *)sender view];
+        if ([v isKindOfClass:[MediaSaverButton class]]) {
+            btn = (MediaSaverButton *)v;
+        }
+    }
+    
+    if (btn) {
+        [UIView animateWithDuration:0.1 animations:^{
+            btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
+        } completion:^(BOOL finished) {
+            [UIView animateWithDuration:0.15 animations:^{
+                btn.transform = CGAffineTransformIdentity;
+            }];
         }];
-    }];
+    }
+    
+    @try {
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        [feedback impactOccurred];
+    } @catch (...) {}
     
     NSString *videoPath = [MediaSaver findVideoPathInController:nil];
     if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
@@ -527,7 +696,24 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
 + (NSString *)findVideoPathInController:(UIViewController *)controller {
     NSFileManager *fm = [NSFileManager defaultManager];
     
-    // 1. Check last opened video from hook_open
+    // 1. Highest Priority: The video that is currently being played/decoded by Telegram right now!
+    NSString *active = getCurrentPlayingVideoPath();
+    if (active) {
+        if ([active hasSuffix:@"_partial"]) {
+            NSString *complete = [active substringToIndex:active.length - 8];
+            if ([fm fileExistsAtPath:complete]) {
+                active = complete;
+            }
+        }
+        if ([fm fileExistsAtPath:active]) {
+            NSDictionary *attrs = [fm attributesOfItemAtPath:active error:nil];
+            if (attrs && [attrs fileSize] >= 40 * 1024) {
+                return [self ensureVideoExtension:active];
+            }
+        }
+    }
+    
+    // 2. Check last opened candidate from hook_open
     NSString *recent = [self lastOpenedVideoPath];
     if (recent && [fm fileExistsAtPath:recent]) {
         if ([recent hasSuffix:@"_partial"]) {
@@ -539,7 +725,7 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         return [self ensureVideoExtension:recent];
     }
     
-    // 2. Build candidate directory list
+    // 3. Candidate directory scan fallback
     NSMutableArray<NSString *> *searchFolders = [NSMutableArray array];
     
     [searchFolders addObject:NSTemporaryDirectory()];
@@ -597,7 +783,6 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         }
     }
     
-    // 3. Find the newest video file
     NSDate *now = [NSDate date];
     NSString *bestVideo = nil;
     NSDate *newestModDate = [NSDate distantPast];
@@ -615,7 +800,7 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
             if (size < 40 * 1024) continue;
             
             NSDate *mod = attrs[NSFileModificationDate];
-            if (!mod || [now timeIntervalSinceDate:mod] > 3600.0) continue; // within 1 hour
+            if (!mod || [now timeIntervalSinceDate:mod] > 3600.0) continue;
             
             if (isVideoFile(fullPath)) {
                 if ([mod compare:newestModDate] == NSOrderedDescending) {
