@@ -398,6 +398,50 @@ static BOOL isDisplayingVideo(UIView *view) {
     return NO;
 }
 
+static BOOL isControllerDisplayingVideo(UIViewController *controller) {
+    if (!controller) return NO;
+    
+    id central = nil;
+    @try {
+        id node = nil;
+        if ([controller respondsToSelector:NSSelectorFromString(@"galleryNode")]) {
+            node = [controller valueForKey:@"galleryNode"];
+        } else if ([controller respondsToSelector:NSSelectorFromString(@"controllerNode")]) {
+            node = [controller valueForKey:@"controllerNode"];
+        } else if ([controller respondsToSelector:NSSelectorFromString(@"displayNode")]) {
+            node = [controller valueForKey:@"displayNode"];
+        }
+        if (node && [node respondsToSelector:NSSelectorFromString(@"pager")]) {
+            id pager = [node valueForKey:@"pager"];
+            if (pager && [pager respondsToSelector:NSSelectorFromString(@"centralItemNode")]) {
+                central = [pager performSelector:NSSelectorFromString(@"centralItemNode")];
+            }
+        }
+    } @catch (...) {}
+    
+    if (central) {
+        NSString *cls = NSStringFromClass([central class]);
+        if ([cls containsString:@"Image"] || [cls containsString:@"Photo"]) {
+            return NO;
+        }
+        if ([cls containsString:@"Video"] || [cls containsString:@"UniversalVideo"]) {
+            return YES;
+        }
+        @try {
+            if ([central respondsToSelector:NSSelectorFromString(@"videoNode")]) {
+                id vn = [central valueForKey:@"videoNode"];
+                if (vn) return YES;
+            }
+        } @catch (...) {}
+        return NO;
+    }
+    
+    if (controller.isViewLoaded) {
+        return isDisplayingVideo(controller.view);
+    }
+    return NO;
+}
+
 static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img), void (^checkLayerContents)(CGImageRef cg)) {
     if (!view || view.hidden || view.alpha < 0.05) return;
     @try {
@@ -701,6 +745,15 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 }
 
 + (NSString *)findVideoPathForTarget:(id)target {
+    if (!target) return nil;
+    
+    // If target is a UIViewController and it is not displaying a video (e.g. photo is viewed), do not look for video!
+    if ([target isKindOfClass:[UIViewController class]]) {
+        if (!isControllerDisplayingVideo((UIViewController *)target)) {
+            return nil;
+        }
+    }
+    
     NSFileManager *fm = [NSFileManager defaultManager];
     
     // 1. Precise binding via TLParser Swift reflection (centralItemNode / fileId / uniqueId / tempPath)
@@ -730,9 +783,9 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         }
     }
     
-    // 3. Last opened candidate or active playing video from Telegram decoder (only if very recent)
+    // 3. Last opened candidate or active playing video from Telegram decoder (only if very recent within 5s)
     NSString *active = getCurrentPlayingVideoPath();
-    if (active && (CFAbsoluteTimeGetCurrent() - last_played_video_time < 30.0)) {
+    if (active && (CFAbsoluteTimeGetCurrent() - last_played_video_time < 5.0)) {
         if ([active hasSuffix:@"_partial"]) {
             NSString *complete = [active substringToIndex:active.length - 8];
             if ([fm fileExistsAtPath:complete]) {
@@ -853,14 +906,13 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         [feedback impactOccurred];
     } @catch (...) {}
     
-    NSString *videoPath = [self findVideoPathForTarget:controller];
-    if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
-        [self saveVideoToPhotos:videoPath];
-        return;
-    }
-    
-    BOOL isVideo = isDisplayingVideo(controller.view);
+    BOOL isVideo = isControllerDisplayingVideo(controller);
     if (isVideo) {
+        NSString *videoPath = [self findVideoPathForTarget:controller];
+        if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
+            [self saveVideoToPhotos:videoPath];
+            return;
+        }
         [self showToast:@"Video is downloading, please wait..." success:NO];
         return;
     }

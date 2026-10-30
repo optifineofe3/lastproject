@@ -1180,31 +1180,41 @@ class TLParser: NSObject {
         var objectsToInspect: [Any] = []
 
         if let vc = target as? UIViewController {
-            objectsToInspect.append(vc)
-            // Inspect gallery pager and centralItemNode first if available
+            var foundCentral = false
             let candidateNames = ["displayNode", "galleryNode", "controllerNode"]
             for name in candidateNames {
                 if let dNode = safeGetProperty(vc, name) as? NSObject {
-                    objectsToInspect.append(dNode)
                     if let pager = safeGetProperty(dNode, "pager") as? NSObject {
-                        objectsToInspect.append(pager)
                         if let central = safeGetProperty(pager, "centralItemNode") {
-                            objectsToInspect.insert(central, at: 0)
+                            foundCentral = true
+                            let cCls = String(describing: type(of: central))
+                            // If user is looking at a photo item, do not resolve any video
+                            if cCls.contains("Image") || cCls.contains("Photo") {
+                                return nil
+                            }
+                            objectsToInspect.append(central)
                             if let cObj = central as? NSObject {
                                 if let itm = safeGetProperty(cObj, "item") {
-                                    objectsToInspect.insert(itm, at: 0)
+                                    objectsToInspect.append(itm)
                                 }
                                 if let vNode = safeGetProperty(cObj, "videoNode") {
-                                    objectsToInspect.insert(vNode, at: 0)
+                                    objectsToInspect.append(vNode)
+                                }
+                                if let v = safeGetProperty(cObj, "view") as? UIView {
+                                    objectsToInspect.append(v)
+                                    collectNodesAndViews(from: v, into: &objectsToInspect)
                                 }
                             }
                         }
                     }
                 }
             }
-            if vc.isViewLoaded, let v = vc.view {
-                objectsToInspect.append(v)
-                collectNodesAndViews(from: v, into: &objectsToInspect)
+            if !foundCentral {
+                objectsToInspect.append(vc)
+                if vc.isViewLoaded, let v = vc.view {
+                    objectsToInspect.append(v)
+                    collectNodesAndViews(from: v, into: &objectsToInspect)
+                }
             }
         } else if let view = target as? UIView {
             objectsToInspect.append(view)
