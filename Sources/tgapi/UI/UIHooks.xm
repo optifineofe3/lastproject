@@ -1,4 +1,5 @@
 #import <UIKit/UIKit.h>
+#import <UIKit/UIGestureRecognizerSubclass.h>
 #import "Headers.h"
 #import "MediaSaver.h"
 
@@ -92,9 +93,10 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     NSString *className = NSStringFromClass([self class]);
     if ([className containsString:@"InstantVideo"] || [className containsString:@"OverlayInstantVideoNode"]) {
-        UIView *btn = [self.view viewWithTag:998833];
+        UIView *v = [(ASDisplayNode *)self view];
+        UIView *btn = [v viewWithTag:998833];
         if (btn && !btn.hidden && btn.alpha > 0.05 && btn.userInteractionEnabled) {
-            CGPoint btnPoint = [self.view convertPoint:point toView:btn];
+            CGPoint btnPoint = [v convertPoint:point toView:btn];
             if ([btn pointInside:btnPoint withEvent:event]) {
                 return btn;
             }
@@ -373,9 +375,10 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 %hook ChatMessageInteractiveInstantVideoNode
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *btn = [self.view viewWithTag:998833];
+    UIView *v = [(ASDisplayNode *)self view];
+    UIView *btn = [v viewWithTag:998833];
     if (btn && !btn.hidden && btn.alpha > 0.05 && btn.userInteractionEnabled) {
-        CGPoint btnPoint = [self.view convertPoint:point toView:btn];
+        CGPoint btnPoint = [v convertPoint:point toView:btn];
         if ([btn pointInside:btnPoint withEvent:event]) {
             return btn;
         }
@@ -395,14 +398,16 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 %hook TapLongTapOrDoubleTapGestureRecognizer
 
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UIGestureRecognizer *rec = (UIGestureRecognizer *)self;
     UITouch *touch = [touches anyObject];
-    if (touch && self.view) {
-        CGPoint loc = [touch locationInView:self.view];
-        UIView *btn = [self.view viewWithTag:998833] ?: [self.view viewWithTag:998811];
+    UIView *recView = rec.view;
+    if (touch && recView) {
+        CGPoint loc = [touch locationInView:recView];
+        UIView *btn = [recView viewWithTag:998833] ?: [recView viewWithTag:998811];
         if (btn && !btn.hidden && btn.alpha > 0.05) {
-            CGPoint btnLoc = [self.view convertPoint:loc toView:btn];
+            CGPoint btnLoc = [recView convertPoint:loc toView:btn];
             if ([btn pointInside:btnLoc withEvent:event]) {
-                self.state = UIGestureRecognizerStateFailed;
+                rec.state = UIGestureRecognizerStateFailed;
                 return;
             }
         }
