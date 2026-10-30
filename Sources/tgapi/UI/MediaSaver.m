@@ -1,4 +1,5 @@
 #import "MediaSaver.h"
+#import "../Headers.h"
 #import "Headers.h"
 #import "../fishhook/fishhook.h"
 #import <Photos/Photos.h>
@@ -740,8 +741,9 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     NSFileManager *fm = [NSFileManager defaultManager];
     
     // 1. Precise binding via TLParser Swift reflection (centralItemNode / fileId / uniqueId / tempPath)
-    if ([TLParser respondsToSelector:@selector(findMediaFilePathFromTarget:)]) {
-        NSString *path = [TLParser findMediaFilePathFromTarget:target];
+    Class parserCls = NSClassFromString(@"TLParser");
+    if (parserCls && [parserCls respondsToSelector:@selector(findMediaFilePathFromTarget:)]) {
+        NSString *path = [parserCls findMediaFilePathFromTarget:target];
         if (path && [fm fileExistsAtPath:path]) {
             return [self ensureVideoExtension:path];
         }

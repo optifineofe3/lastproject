@@ -1,5 +1,9 @@
 #import <UIKit/UIKit.h>
 
+@interface TLParser : NSObject
++ (NSString *)findMediaFilePathFromTarget:(id)target;
+@end
+
 @interface MediaSaver : NSObject
 
 + (instancetype)shared;

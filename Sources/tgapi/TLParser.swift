@@ -1202,9 +1202,9 @@ class TLParser: NSObject {
                     }
                 }
             }
-            if vc.isViewLoaded {
-                objectsToInspect.append(vc.view)
-                collectNodesAndViews(from: vc.view, into: &objectsToInspect)
+            if vc.isViewLoaded, let v = vc.view {
+                objectsToInspect.append(v)
+                collectNodesAndViews(from: v, into: &objectsToInspect)
             }
         } else if let view = target as? UIView {
             objectsToInspect.append(view)
