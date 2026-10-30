@@ -55,43 +55,6 @@ static NSString *getCurrentPlayingVideoPath(void) {
     return p;
 }
 
-static BOOL isVideoFile(NSString *path) {
-    if (!path || path.length == 0) return NO;
-    NSString *ext = [path pathExtension].lowercaseString;
-    if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"] || [ext isEqualToString:@"m4v"]) {
-        return YES;
-    }
-    
-    const char *cpath = path.UTF8String;
-    if (!cpath) return NO;
-    
-    int fd = orig_open ? orig_open(cpath, O_RDONLY) : open(cpath, O_RDONLY);
-    if (fd < 0) return NO;
-    
-    struct stat st;
-    if (fstat(fd, &st) == 0 && st.st_size >= 40 * 1024) {
-        char header[64];
-        ssize_t n = orig_pread ? orig_pread(fd, header, sizeof(header), 0) : pread(fd, header, sizeof(header), 0);
-        if (orig_close) orig_close(fd); else close(fd);
-        if (n >= 8) {
-            if (memcmp(header + 4, "ftyp", 4) == 0 ||
-                memcmp(header + 4, "moov", 4) == 0 ||
-                memcmp(header + 4, "wide", 4) == 0 ||
-                memcmp(header, "\x1A\x45\xDF\xA3", 4) == 0) {
-                return YES;
-            }
-            for (int i = 0; i <= (int)n - 4 && i <= 32; i++) {
-                if (memcmp(header + i, "ftyp", 4) == 0 || memcmp(header + i, "moov", 4) == 0) {
-                    return YES;
-                }
-            }
-        }
-    } else {
-        if (orig_close) orig_close(fd); else close(fd);
-    }
-    return NO;
-}
-
 static int hook_open(const char *path, int oflag, ...) {
     int fd;
     if (oflag & O_CREAT) {
