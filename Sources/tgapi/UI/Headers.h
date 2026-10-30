@@ -21,8 +21,6 @@
 @end
 
 
-@interface LanguageSelector : UIViewController <UITableViewDataSource, UITableViewDelegate>
-@end
 
 @interface LocationSelector : UIViewController <MKMapViewDelegate>
 @end

@@ -21,18 +21,9 @@
 	self.title = @"Tweak";
 
 	[[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(didChangeLanguage)
-                                                 name:@"LanguageChangedNotification"
-                                               object:nil];
-
-	[[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(didChangeFakeLocation)
                                                  name:@"TweakLocationChanged"
                                                object:nil];
-}
-
-- (void)didChangeLanguage {
-	[self.tableView reloadData];
 }
 
 - (void)didChangeFakeLocation {
@@ -138,11 +129,10 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
     MISC = 2,
     FILE_FIXER = 3,
     FAKE_LOCATION = 4,
-    LANGUAGE = 5,
 };
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)tableView {
-    return 6;
+    return 5;
 }
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
@@ -157,8 +147,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		   return 2;
 		case FAKE_LOCATION:
 		   return 2;
-		case LANGUAGE:
-		   return 1;
 		default:
 		   return 0;
 	}
@@ -177,8 +165,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		   return TGLoc(@"FILE_FIXER_SECTION_HEADER");
 		case FAKE_LOCATION:
 		   return TGLoc(@"FAKE_LOCATION_SECTION_HEADER");
-		case LANGUAGE:
-		   return TGLoc(@"LANGUAGE_SECTION_HEADER");
 		default:
 		   return nil;
 	}
@@ -465,22 +451,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 			return cell;
 		}
 	}
-	else if (indexPath.section == 5) { // Language
-		if (indexPath.row == 0) {
-			cell = [self normalCellFromTableView:tableView];
-
-			cell.imageView.image = [UIImage systemImageNamed:@"globe"];
-			cell.imageView.tintColor = [self dynamicColorBW];
-			cell.textLabel.text = TGLoc(@"LANGUAGE_SECTION_HEADER");
-			cell.detailTextLabel.text = nil;
-			cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
-			cell.accessoryView = nil;
-
-			cell.textLabel.numberOfLines = 0;
-			cell.detailTextLabel.numberOfLines = 0;
-			return cell;
-		}
-	}
 
     return cell;
 }
@@ -499,12 +469,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 	if (indexPath.section == FAKE_LOCATION) {
 		if (indexPath.row == 1) {
 			[self showLocationSelector];
-		}
-	}
-
-	if (indexPath.section == LANGUAGE) {
-		if (indexPath.row == 0) {
-			[self showLanguageSelector];
 		}
 	}
 }
@@ -602,12 +566,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 	return formattedSize;
 }
 
-- (void)showLanguageSelector {
-	LanguageSelector *ui = [LanguageSelector new];
-	UINavigationController *navVC = [[UINavigationController alloc] initWithRootViewController:ui];
-	[self presentViewController:navVC animated:YES completion:nil];
-}
-
 - (void)showLocationSelector {
 	LocationSelector *ui = [LocationSelector new];
 	UINavigationController *navVC = [[UINavigationController alloc] initWithRootViewController:ui];
@@ -652,7 +610,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 }
 
 - (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"LanguageChangedNotification" object:nil];
 	[[NSNotificationCenter defaultCenter] removeObserver:self name:@"TweakLocationChanged" object:nil];
 }
 

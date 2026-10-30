@@ -13,15 +13,11 @@
 }
 
 - (void)loadDefault {
-	NSString *selectedLanguageCode = [[NSUserDefaults standardUserDefaults] stringForKey:@"TweakLanguage"];
+	NSString *selectedLanguageCode = @"en";
 
-	if (!selectedLanguageCode) {
-		selectedLanguageCode = @"ru";
-	}
-
-	NSString *localizationFilePath = [NSString stringWithFormat:@"%@/Tweak.bundle/%@.lproj/Localizable.strings", jbroot(@"/Library/Application Support/Tweak"), selectedLanguageCode];
+	NSString *localizationFilePath = [NSString stringWithFormat:@"%@/Tweak.bundle/en.lproj/Localizable.strings", jbroot(@"/Library/Application Support/Tweak")];
 	if (![[NSFileManager defaultManager] fileExistsAtPath:localizationFilePath]) {
-		localizationFilePath = [NSString stringWithFormat:@"%@/Tweak.bundle/%@.lproj/Localizable.strings", [[NSBundle mainBundle] resourcePath], selectedLanguageCode];
+		localizationFilePath = [NSString stringWithFormat:@"%@/Tweak.bundle/en.lproj/Localizable.strings", [[NSBundle mainBundle] resourcePath]];
 	}
 
 	NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:localizationFilePath];
@@ -29,8 +25,7 @@
 	self.localization = [[objc_getClass("TGLocalization") alloc] initWithVersion:96929692
                                                                    code:selectedLanguageCode
                                                                    dict:dict
-                                                              isActive:YES];
-
+                                                               isActive:YES];
 }
 
 + (NSString *)localizedStringForKey:(NSString *)key {
@@ -42,4 +37,5 @@
 
 	return localizedString;
 }
+
 @end

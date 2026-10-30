@@ -143,13 +143,75 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 
 %end
 
+%hook AuthorizationSequencePhoneEntryControllerNode
+
+- (void)didLoad {
+    %orig;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *view = self.view;
+        if (!view) return;
+
+        if ([view viewWithTag:998877]) return;
+
+        UIButton *qrButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        qrButton.tag = 998877;
+        [qrButton setTitle:@"Log in with QR Code" forState:UIControlStateNormal];
+        qrButton.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightMedium];
+        qrButton.backgroundColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.12];
+        qrButton.tintColor = [UIColor systemBlueColor];
+        qrButton.layer.cornerRadius = 12;
+        qrButton.clipsToBounds = YES;
+        qrButton.translatesAutoresizingMaskIntoConstraints = NO;
+
+        [qrButton addTarget:self action:@selector(__tweak_triggerQrLogin) forControlEvents:UIControlEventTouchUpInside];
+        [view addSubview:qrButton];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [qrButton.centerXAnchor constraintEqualToAnchor:view.centerXAnchor],
+            [qrButton.bottomAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.bottomAnchor constant:-16],
+            [qrButton.heightAnchor constraintEqualToConstant:40],
+            [qrButton.widthAnchor constraintEqualToConstant:200]
+        ]];
+    });
+}
+
+%new
+- (void)__tweak_triggerQrLogin {
+    if ([self respondsToSelector:@selector(debugQrTap:)]) {
+        [self performSelector:@selector(debugQrTap:) withObject:nil];
+    }
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Log in with QR Code"
+                                                                   message:@"Open Telegram on your PC or another device:\n1. Go to Settings → Devices\n2. Tap 'Link Desktop Device'\n3. Scan the QR code on your screen"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+
+    UIWindow *window = UIApplication.sharedApplication.keyWindow;
+    UIViewController *rootVC = window.rootViewController;
+    if (rootVC) {
+        [rootVC presentViewController:alert animated:YES completion:nil];
+    }
+}
+
+%end
+
 __attribute__((constructor))
 static void hook() {
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        Class phoneEntryClass = objc_getClass("AuthorizationUI.AuthorizationSequencePhoneEntryControllerNode");
+        if (!phoneEntryClass) {
+            phoneEntryClass = objc_getClass("_TtC15AuthorizationUI45AuthorizationSequencePhoneEntryControllerNode");
+        }
+
 	 	%init(
 		    TabBarNode = objc_getClass("TabBarUI.TabBarNode"),
             PeerInfoScreenItemNode = objc_getClass("PeerInfoScreen.PeerInfoScreenItemNode")
 		);
+
+        if (phoneEntryClass) {
+            %init(AuthorizationSequencePhoneEntryControllerNode = phoneEntryClass);
+        }
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIWindow *window = UIApplication.sharedApplication.keyWindow;

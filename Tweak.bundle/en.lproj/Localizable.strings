@@ -4,7 +4,6 @@
 "MISC_SECTION_HEADER" = "Miscellaneous";
 "FILE_FIXER_SECTION_HEADER" = "File Picker Fix";
 "FAKE_LOCATION_SECTION_HEADER" = "Fake Location";
-"LANGUAGE_SECTION_HEADER" = "Language";
 
 /* Ghost Mode */
 "DISABLE_ONLINE_STATUS_TITLE" = "Hide Online Status";
