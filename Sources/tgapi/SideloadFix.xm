@@ -233,8 +233,61 @@ void initSideloadedFixes(void) {
                 }));
             }
         }
+
+        // 5. Hook INPreferences if Intents is in runtime to prevent missing Siri entitlement crash
+        Class inPreferencesClass = objc_getClass("INPreferences");
+        if (!inPreferencesClass) {
+            dlopen("/System/Library/Frameworks/Intents.framework/Intents", RTLD_NOW);
+            inPreferencesClass = objc_getClass("INPreferences");
+        }
+        if (inPreferencesClass) {
+            Method authMethod = class_getClassMethod(inPreferencesClass, @selector(siriAuthorizationStatus));
+            if (authMethod) {
+                method_setImplementation(authMethod, imp_implementationWithBlock(^NSInteger(id selfClass) {
+                    return 2; // INSiriAuthorizationStatusDenied
+                }));
+            }
+            Method reqMethod = class_getClassMethod(inPreferencesClass, @selector(requestSiriAuthorization:));
+            if (reqMethod) {
+                method_setImplementation(reqMethod, imp_implementationWithBlock(^void(id selfClass, void (^handler)(NSInteger)) {
+                    if (handler) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            handler(2); // INSiriAuthorizationStatusDenied
+                        });
+                    }
+                }));
+            }
+            Method langMethod = class_getClassMethod(inPreferencesClass, @selector(siriLanguageCode));
+            if (langMethod) {
+                method_setImplementation(langMethod, imp_implementationWithBlock(^id(id selfClass) {
+                    return @"en-US";
+                }));
+            }
+            SEL verifySel = sel_registerName("_verifyEntitlements");
+            Method verifyMethod = class_getInstanceMethod(inPreferencesClass, verifySel);
+            if (verifyMethod) {
+                method_setImplementation(verifyMethod, imp_implementationWithBlock(^void(id selfInstance) {
+                    // Suppress entitlement verification throw
+                }));
+            }
+        }
     });
 }
+
+// MARK: - Forward Declarations
+
+@interface BuildConfig : NSObject
+- (bool)isSiriEnabled;
+- (bool)isICloudEnabled;
++ (NSString *)bundleSeedId;
+@end
+
+@interface INPreferences : NSObject
++ (NSInteger)siriAuthorizationStatus;
++ (void)requestSiriAuthorization:(void (^)(NSInteger status))handler;
++ (id)siriLanguageCode;
+- (void)_verifyEntitlements;
+@end
 
 // MARK: - Logos Hooks
 
@@ -264,8 +317,16 @@ void initSideloadedFixes(void) {
 
 %end
 
-// Hook BuildConfig to ensure bundleSeedId never returns nil, which prevents PasscodeEnvironment throws
+// Hook BuildConfig to ensure bundleSeedId never returns nil, and disable Siri & iCloud which lack sideload entitlements
 %hook BuildConfig
+
+- (bool)isSiriEnabled {
+    return false;
+}
+
+- (bool)isICloudEnabled {
+    return false;
+}
 
 + (NSString *)bundleSeedId {
     NSString *orig = %orig;
@@ -279,6 +340,34 @@ void initSideloadedFixes(void) {
         }
     }
     return @"1234567890";
+}
+
+%end
+
+// Hook INPreferences to prevent NSInternalInconsistencyException when com.apple.developer.siri entitlement is missing
+%hook INPreferences
+
++ (NSInteger)siriAuthorizationStatus {
+    return 2; // INSiriAuthorizationStatusDenied
+}
+
++ (void)requestSiriAuthorization:(void (^)(NSInteger status))handler {
+    if (handler) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            handler(2);
+        });
+    }
+}
+
++ (id)siriLanguageCode {
+    return @"en-US";
+}
+
+- (void)_verifyEntitlements {
+}
+
+- (instancetype)init {
+    return self;
 }
 
 %end
