@@ -1,7 +1,11 @@
 #import "MediaSaver.h"
+#import "../fishhook/fishhook.h"
 #import <Photos/Photos.h>
 #import <AVFoundation/AVFoundation.h>
 #import <objc/runtime.h>
+#import <sys/stat.h>
+#import <fcntl.h>
+#import <unistd.h>
 
 @interface MediaSaverButton : UIButton
 @property (nonatomic, weak) UIViewController *targetController;
@@ -9,6 +13,79 @@
 
 @implementation MediaSaverButton
 @end
+
+static int (*orig_open)(const char *path, int oflag, ...);
+
+static NSMutableArray<NSString *> *openedVideoPaths = nil;
+static id openedVideoPathsLock = nil;
+
+static BOOL isVideoFile(NSString *path) {
+    if (!path || path.length == 0) return NO;
+    NSString *ext = [path pathExtension].lowercaseString;
+    if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"] || [ext isEqualToString:@"m4v"]) {
+        return YES;
+    }
+    
+    const char *cpath = path.UTF8String;
+    if (!cpath) return NO;
+    
+    int fd = orig_open ? orig_open(cpath, O_RDONLY) : open(cpath, O_RDONLY);
+    if (fd < 0) return NO;
+    
+    struct stat st;
+    if (fstat(fd, &st) == 0 && st.st_size >= 40 * 1024) {
+        char header[12];
+        ssize_t n = read(fd, header, 12);
+        close(fd);
+        if (n >= 8 && memcmp(header + 4, "ftyp", 4) == 0) {
+            return YES;
+        }
+    } else {
+        close(fd);
+    }
+    return NO;
+}
+
+static int hook_open(const char *path, int oflag, ...) {
+    int fd;
+    if (oflag & O_CREAT) {
+        va_list args;
+        va_start(args, oflag);
+        mode_t mode = (mode_t)va_arg(args, int);
+        va_end(args);
+        fd = orig_open ? orig_open(path, oflag, mode) : open(path, oflag, mode);
+    } else {
+        fd = orig_open ? orig_open(path, oflag) : open(path, oflag);
+    }
+    
+    if (fd >= 0 && path != NULL) {
+        if ((oflag & (O_WRONLY | O_RDWR)) == 0) {
+            if (strstr(path, "postbox/media") != NULL ||
+                strstr(path, "/temp/") != NULL ||
+                strstr(path, "/tmp/") != NULL ||
+                strstr(path, ".mp4") != NULL ||
+                strstr(path, ".mov") != NULL) {
+                @autoreleasepool {
+                    [MediaSaver noteOpenedCandidatePath:[NSString stringWithUTF8String:path]];
+                }
+            }
+        }
+    }
+    return fd;
+}
+
+__attribute__((constructor))
+static void initMediaSaverHooks(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        openedVideoPaths = [NSMutableArray array];
+        openedVideoPathsLock = [[NSObject alloc] init];
+        
+        rebind_symbols((struct rebinding[]){
+            {"open", (void *)hook_open, (void **)&orig_open}
+        }, 1);
+    });
+}
 
 @implementation MediaSaver
 
@@ -19,6 +96,36 @@
         instance = [[MediaSaver alloc] init];
     });
     return instance;
+}
+
++ (void)noteOpenedCandidatePath:(NSString *)path {
+    if (!path || path.length == 0) return;
+    if (!isVideoFile(path)) return;
+    
+    if (!openedVideoPathsLock) {
+        openedVideoPaths = [NSMutableArray array];
+        openedVideoPathsLock = [[NSObject alloc] init];
+    }
+    
+    @synchronized (openedVideoPathsLock) {
+        [openedVideoPaths removeObject:path];
+        [openedVideoPaths insertObject:path atIndex:0];
+        if (openedVideoPaths.count > 15) {
+            [openedVideoPaths removeLastObject];
+        }
+    }
+}
+
++ (NSString *)lastOpenedVideoPath {
+    if (!openedVideoPathsLock) return nil;
+    @synchronized (openedVideoPathsLock) {
+        for (NSString *p in openedVideoPaths) {
+            if ([[NSFileManager defaultManager] fileExistsAtPath:p]) {
+                return p;
+            }
+        }
+    }
+    return nil;
 }
 
 static UIImage *downloadIconImage(void) {
@@ -68,36 +175,13 @@ static UIImage *downloadIconImage(void) {
     return icon;
 }
 
-static BOOL isVideoFile(NSString *path) {
-    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return NO;
-    NSString *ext = [path pathExtension].lowercaseString;
-    if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"] || [ext isEqualToString:@"m4v"]) {
-        return YES;
-    }
-    // Check magic bytes for MP4 (offset 4 is "ftyp")
-    @try {
-        NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
-        if (fh) {
-            NSData *header = [fh readDataOfLength:12];
-            [fh closeFile];
-            if (header.length >= 8) {
-                const char *bytes = (const char *)header.bytes;
-                if (memcmp(bytes + 4, "ftyp", 4) == 0) {
-                    return YES;
-                }
-            }
-        }
-    } @catch (...) {}
-    return NO;
-}
-
 + (NSString *)ensureVideoExtension:(NSString *)path {
     if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
     NSString *ext = [path pathExtension].lowercaseString;
     if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"] || [ext isEqualToString:@"m4v"]) {
         return path;
     }
-    // If file has no extension (e.g. TempBox file named "file"), copy with .mp4 extension
+    
     NSString *target = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"tg_saved_%ld.mp4", (long)(CFAbsoluteTimeGetCurrent() * 1000)]];
     [[NSFileManager defaultManager] removeItemAtPath:target error:nil];
     NSError *err = nil;
@@ -107,47 +191,65 @@ static BOOL isVideoFile(NSString *path) {
     return path;
 }
 
-static void scanLayersRecursively(CALayer *layer, void (^foundCallback)(NSString *path)) {
-    if (!layer) return;
-    @try {
-        if ([layer isKindOfClass:[AVPlayerLayer class]]) {
-            AVPlayer *player = [(AVPlayerLayer *)layer player];
-            AVPlayerItem *item = player.currentItem;
-            if ([item.asset isKindOfClass:[AVURLAsset class]]) {
-                NSURL *url = [(AVURLAsset *)item.asset URL];
-                if (url && url.isFileURL && [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
-                    foundCallback(url.path);
-                    return;
-                }
-            }
+static BOOL isViewVisibleInWindow(UIView *v) {
+    if (!v || v.hidden || v.alpha < 0.05) return NO;
+    UIWindow *win = v.window ?: UIApplication.sharedApplication.keyWindow;
+    if (!win) return YES;
+    CGRect r = [v convertRect:v.bounds toView:win];
+    CGRect inter = CGRectIntersection(r, win.bounds);
+    return (!CGRectIsNull(inter) && inter.size.width > 60 && inter.size.height > 60);
+}
+
+static BOOL isDisplayingVideo(UIView *view) {
+    if (!view) return NO;
+    NSString *cls = NSStringFromClass([view class]);
+    BOOL isVideoClass = [cls containsString:@"UniversalVideo"] ||
+                        [cls containsString:@"MediaPlayer"] ||
+                        [cls containsString:@"VideoPlayback"] ||
+                        [cls containsString:@"ChatVideoGallery"] ||
+                        [cls containsString:@"InstantVideo"];
+    if (isVideoClass && isViewVisibleInWindow(view)) {
+        return YES;
+    }
+    
+    Class sampleBufferClass = NSClassFromString(@"AVSampleBufferDisplayLayer");
+    Class mediaLayerClass = NSClassFromString(@"MediaPlayerNodeLayer");
+    if ((sampleBufferClass && [view.layer isKindOfClass:sampleBufferClass]) ||
+        (mediaLayerClass && [view.layer isKindOfClass:mediaLayerClass])) {
+        if (isViewVisibleInWindow(view)) {
+            return YES;
         }
-        for (CALayer *sub in layer.sublayers) {
-            scanLayersRecursively(sub, foundCallback);
-        }
-    } @catch (...) {}
+    }
+    
+    for (UIView *sub in view.subviews) {
+        if (isDisplayingVideo(sub)) return YES;
+    }
+    return NO;
 }
 
 static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), void (^checkLayerContents)(CGImageRef cg)) {
-    if (!v) return;
+    if (!v || v.hidden || v.alpha < 0.05) return;
     @try {
-        // 1. Check CALayer contents
-        id contents = v.layer.contents;
-        if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
-            checkLayerContents((__bridge CGImageRef)contents);
-        }
-        
-        // 2. Check UIImageView
-        if ([v isKindOfClass:[UIImageView class]]) {
-            checkImage([(UIImageView *)v image]);
-        }
-        
-        // 3. Check AsyncDisplayKit node
-        @try {
-            id node = [v valueForKey:@"asyncdisplaykit_node"];
-            if (node && [node respondsToSelector:@selector(image)]) {
-                checkImage([node performSelector:@selector(image)]);
+        if (isViewVisibleInWindow(v)) {
+            // 1. Check CALayer contents
+            id contents = v.layer.contents;
+            if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
+                checkLayerContents((__bridge CGImageRef)contents);
             }
-        } @catch (...) {}
+            
+            // 2. Check UIImageView
+            if ([v isKindOfClass:[UIImageView class]]) {
+                checkImage([(UIImageView *)v image]);
+            }
+            
+            // 3. Check AsyncDisplayKit node
+            @try {
+                id node = [v valueForKey:@"asyncdisplaykit_node"];
+                if (node && [node respondsToSelector:@selector(image)]) {
+                    checkImage([node performSelector:@selector(image)]);
+                }
+            } @catch (...) {}
+        }
         
         for (UIView *sub in v.subviews) {
             scanViewsRecursively(sub, checkImage, checkLayerContents);
@@ -167,23 +269,22 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     UIView *view = controller.view;
     if (!view) return;
     
-    // Avoid duplicate buttons
     if ([view viewWithTag:998811]) return;
     
     MediaSaverButton *btn = [MediaSaverButton buttonWithType:UIButtonTypeCustom];
     btn.tag = 998811;
     btn.targetController = controller;
     
-    // Telegram-style sleek dark translucent gray appearance (NO border)
-    btn.backgroundColor = [UIColor colorWithRed:0.20 green:0.20 blue:0.22 alpha:0.75];
+    // Telegram-style sleek dark-black translucent appearance (NO border)
+    btn.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:0.90];
     btn.tintColor = [UIColor whiteColor];
     btn.layer.cornerRadius = 21.0;
     btn.layer.borderWidth = 0.0;
     btn.layer.borderColor = nil;
     btn.layer.shadowColor = [UIColor blackColor].CGColor;
-    btn.layer.shadowOpacity = 0.35;
+    btn.layer.shadowOpacity = 0.40;
     btn.layer.shadowOffset = CGSizeMake(0, 2);
-    btn.layer.shadowRadius = 5.0;
+    btn.layer.shadowRadius = 6.0;
     btn.layer.zPosition = 9999;
     btn.clipsToBounds = NO;
     btn.translatesAutoresizingMaskIntoConstraints = NO;
@@ -193,12 +294,11 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     
     // Start invisible and scaled down for smooth fade-in animation
     btn.alpha = 0.0;
-    btn.transform = CGAffineTransformMakeScale(0.8, 0.8);
+    btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
     
     [view addSubview:btn];
     
     if (isSecret) {
-        // Place in top-left so it does not collide with the flame timer in top-right
         [NSLayoutConstraint activateConstraints:@[
             [btn.topAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.topAnchor constant:12],
             [btn.leadingAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.leadingAnchor constant:16],
@@ -206,7 +306,6 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
             [btn.heightAnchor constraintEqualToConstant:42]
         ]];
     } else {
-        // Place floating in bottom-right, easy to reach with thumb
         [NSLayoutConstraint activateConstraints:@[
             [btn.bottomAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.bottomAnchor constant:-60],
             [btn.trailingAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.trailingAnchor constant:-16],
@@ -221,14 +320,29 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
         btn.transform = CGAffineTransformIdentity;
     } completion:nil];
     
-    // Long-press gesture on view as alternative save trigger
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleLongPress:)];
     lp.minimumPressDuration = 0.5;
     [view addGestureRecognizer:lp];
 }
 
++ (void)detachFromController:(UIViewController *)controller animated:(BOOL)animated {
+    if (!controller || !controller.isViewLoaded) return;
+    UIView *btn = [controller.view viewWithTag:998811];
+    if (!btn) return;
+    
+    if (animated) {
+        [UIView animateWithDuration:0.2 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+            btn.alpha = 0.0;
+            btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
+        } completion:^(BOOL finished) {
+            [btn removeFromSuperview];
+        }];
+    } else {
+        [btn removeFromSuperview];
+    }
+}
+
 - (void)handleButtonTap:(MediaSaverButton *)sender {
-    // Subtle bounce feedback on press
     [UIView animateWithDuration:0.1 animations:^{
         sender.transform = CGAffineTransformMakeScale(0.9, 0.9);
     } completion:^(BOOL finished) {
@@ -277,110 +391,114 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
 - (void)handleInstantVideoDoubleTap:(UITapGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateEnded) return;
     
-    UIView *view = gesture.view;
-    if (!view) return;
-    
     @try {
         UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
         [feedback impactOccurred];
     } @catch (...) {}
     
-    // 1. First search view hierarchy for AVPlayerLayer
-    __block NSString *foundPath = nil;
-    if (view.layer) {
-        @try {
-            scanLayersRecursively(view.layer, ^(NSString *path) {
-                if (isVideoFile(path)) {
-                    foundPath = path;
-                }
-            });
-        } @catch (...) {}
-    }
-    
-    // 2. If not currently playing, scan newest video in temp directory
-    if (!foundPath) {
-        foundPath = [MediaSaver findNewestVideoInDirectory:NSTemporaryDirectory()];
-        if (!foundPath) {
-            foundPath = [MediaSaver findNewestVideoInDirectory:[NSHomeDirectory() stringByAppendingPathComponent:@"tmp"]];
-        }
-    }
-    
-    if (foundPath && [[NSFileManager defaultManager] fileExistsAtPath:foundPath]) {
-        NSString *cleanPath = [MediaSaver ensureVideoExtension:foundPath];
-        if (cleanPath && UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(cleanPath)) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UISaveVideoAtPathToSavedPhotosAlbum(cleanPath, [MediaSaver shared], @selector(video:didFinishSavingWithError:contextInfo:), NULL);
-            });
-            return;
-        }
+    NSString *videoPath = [MediaSaver findVideoPathInController:nil];
+    if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
+        [MediaSaver saveVideoToPhotos:videoPath];
+        return;
     }
     
     [MediaSaver showToast:@"Play round video first to cache it" success:NO];
 }
 
-+ (NSString *)findNewestVideoInDirectory:(NSString *)dir {
-    if (!dir || ![[NSFileManager defaultManager] fileExistsAtPath:dir]) return nil;
-    
++ (NSString *)findVideoPathInController:(UIViewController *)controller {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:dir];
-    NSString *file;
-    NSDate *now = [NSDate date];
-    NSString *newestFile = nil;
-    NSDate *newestDate = [NSDate distantPast];
     
-    int scanned = 0;
-    while ((file = [enumerator nextObject])) {
-        scanned++;
-        if (scanned > 400) break;
+    // 1. Check last opened video from hook_open
+    NSString *recent = [self lastOpenedVideoPath];
+    if (recent && [fm fileExistsAtPath:recent]) {
+        return [self ensureVideoExtension:recent];
+    }
+    
+    // 2. Build candidate directory list
+    NSMutableArray<NSString *> *searchFolders = [NSMutableArray array];
+    
+    [searchFolders addObject:NSTemporaryDirectory()];
+    [searchFolders addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"tmp"]];
+    
+    NSMutableArray<NSString *> *dataRoots = [NSMutableArray array];
+    
+    NSString *docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
+    if (docs) {
+        [dataRoots addObject:[docs stringByAppendingPathComponent:@"telegram-data"]];
         
-        NSString *fullPath = [dir stringByAppendingPathComponent:file];
-        NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
-        if (!attrs || [attrs[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
+        NSString *fakeGroup = [docs stringByAppendingPathComponent:@"FakeGroupContainers"];
+        for (NSString *sub in [fm contentsOfDirectoryAtPath:fakeGroup error:nil]) {
+            [dataRoots addObject:[[fakeGroup stringByAppendingPathComponent:sub] stringByAppendingPathComponent:@"telegram-data"]];
+        }
+    }
+    
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
+    if (bundleId.length > 0) {
+        NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:[NSString stringWithFormat:@"group.%@", bundleId]];
+        if (groupURL && groupURL.path) {
+            [dataRoots addObject:[groupURL.path stringByAppendingPathComponent:@"telegram-data"]];
+        }
+    }
+    
+    NSString *caches = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) firstObject];
+    if (caches) {
+        [dataRoots addObject:[caches stringByAppendingPathComponent:@"telegram-data"]];
+    }
+    
+    for (NSString *root in dataRoots) {
+        if (![fm fileExistsAtPath:root]) continue;
         
-        NSDate *mod = attrs[NSFileModificationDate];
-        if (!mod || [now timeIntervalSinceDate:mod] > 300.0) continue; // within 5 minutes
+        NSString *tempMain = [root stringByAppendingPathComponent:@"temp/main"];
+        if ([fm fileExistsAtPath:tempMain]) {
+            for (NSString *td in [fm contentsOfDirectoryAtPath:tempMain error:nil]) {
+                NSString *fullTd = [tempMain stringByAppendingPathComponent:td];
+                [searchFolders addObject:fullTd];
+                for (NSString *sub in [fm contentsOfDirectoryAtPath:fullTd error:nil]) {
+                    [searchFolders addObject:[fullTd stringByAppendingPathComponent:sub]];
+                }
+            }
+        }
         
-        if (isVideoFile(fullPath)) {
-            if ([mod compare:newestDate] == NSOrderedDescending) {
-                newestDate = mod;
-                newestFile = fullPath;
+        for (NSString *acc in [fm contentsOfDirectoryAtPath:root error:nil]) {
+            if ([acc hasPrefix:@"account-"]) {
+                NSString *mediaPath = [[root stringByAppendingPathComponent:acc] stringByAppendingPathComponent:@"postbox/media"];
+                if ([fm fileExistsAtPath:mediaPath]) {
+                    [searchFolders addObject:mediaPath];
+                }
             }
         }
     }
-    return newestFile;
-}
-
-+ (NSString *)findVideoPathInController:(UIViewController *)controller {
-    if (!controller) return nil;
     
-    // 1. Scan view layers for AVPlayerLayer
-    __block NSString *foundPath = nil;
-    if (controller.isViewLoaded && controller.view.layer) {
-        @try {
-            scanLayersRecursively(controller.view.layer, ^(NSString *path) {
-                if (isVideoFile(path)) {
-                    foundPath = path;
+    // 3. Find the newest video file
+    NSDate *now = [NSDate date];
+    NSString *bestVideo = nil;
+    NSDate *newestModDate = [NSDate distantPast];
+    
+    for (NSString *folder in searchFolders) {
+        NSArray *items = [fm contentsOfDirectoryAtPath:folder error:nil];
+        for (NSString *item in items) {
+            NSString *fullPath = [folder stringByAppendingPathComponent:item];
+            NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
+            if (!attrs || [attrs[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
+            
+            unsigned long long size = [attrs fileSize];
+            if (size < 40 * 1024) continue;
+            
+            NSDate *mod = attrs[NSFileModificationDate];
+            if (!mod || [now timeIntervalSinceDate:mod] > 1800.0) continue;
+            
+            if (isVideoFile(fullPath)) {
+                if ([mod compare:newestModDate] == NSOrderedDescending) {
+                    newestModDate = mod;
+                    bestVideo = fullPath;
                 }
-            });
-        } @catch (...) {}
-    }
-    if (foundPath) return [self ensureVideoExtension:foundPath];
-    
-    // 2. Scan temp directories for video files modified in the last 5 minutes
-    NSString *tmpDir = NSTemporaryDirectory();
-    NSString *bestTemp = [self findNewestVideoInDirectory:tmpDir];
-    if (bestTemp) return [self ensureVideoExtension:bestTemp];
-    
-    NSString *homeTmp = [NSHomeDirectory() stringByAppendingPathComponent:@"tmp"];
-    if (![homeTmp isEqualToString:tmpDir]) {
-        NSString *homeBest = [self findNewestVideoInDirectory:homeTmp];
-        if (homeBest) return [self ensureVideoExtension:homeBest];
+            }
+        }
     }
     
-    NSString *caches = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches"];
-    NSString *cachesBest = [self findNewestVideoInDirectory:caches];
-    if (cachesBest) return [self ensureVideoExtension:cachesBest];
-    
+    if (bestVideo) {
+        return [self ensureVideoExtension:bestVideo];
+    }
     return nil;
 }
 
@@ -428,6 +546,99 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     return snap;
 }
 
++ (void)saveVideoToPhotos:(NSString *)videoPath {
+    NSString *cleanPath = [self ensureVideoExtension:videoPath];
+    if (!cleanPath || ![[NSFileManager defaultManager] fileExistsAtPath:cleanPath]) {
+        [self showToast:@"Video file not found" success:NO];
+        return;
+    }
+    
+    void (^saveBlock)(void) = ^{
+        [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+            [PHAssetChangeRequest creationRequestForAssetFromVideoAtFileURL:[NSURL fileURLWithPath:cleanPath]];
+        } completionHandler:^(BOOL success, NSError * _Nullable error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (success) {
+                    [self showToast:@"Video saved to Camera Roll" success:YES];
+                } else {
+                    if (UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(cleanPath)) {
+                        UISaveVideoAtPathToSavedPhotosAlbum(cleanPath, [MediaSaver shared], @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+                    } else {
+                        [self showToast:[NSString stringWithFormat:@"Error: %@", error.localizedDescription ?: @"failed"] success:NO];
+                    }
+                }
+            });
+        }];
+    };
+    
+    PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
+    if (@available(iOS 14.0, *)) {
+        if (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited) {
+            saveBlock();
+            return;
+        }
+    } else {
+        if (status == PHAuthorizationStatusAuthorized) {
+            saveBlock();
+            return;
+        }
+    }
+    
+    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus newStatus) {
+        if (newStatus == PHAuthorizationStatusAuthorized || (@available(iOS 14.0, *) && newStatus == PHAuthorizationStatusLimited)) {
+            saveBlock();
+        } else {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self showToast:@"Photos access denied" success:NO];
+            });
+        }
+    }];
+}
+
++ (void)saveImageToPhotos:(UIImage *)image {
+    if (!image) {
+        [self showToast:@"No image found" success:NO];
+        return;
+    }
+    
+    void (^saveBlock)(void) = ^{
+        [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+            [PHAssetChangeRequest creationRequestForAssetFromImage:image];
+        } completionHandler:^(BOOL success, NSError * _Nullable error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (success) {
+                    [self showToast:@"Photo saved to Camera Roll" success:YES];
+                } else {
+                    UIImageWriteToSavedPhotosAlbum(image, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
+                }
+            });
+        }];
+    };
+    
+    PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
+    if (@available(iOS 14.0, *)) {
+        if (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited) {
+            saveBlock();
+            return;
+        }
+    } else {
+        if (status == PHAuthorizationStatusAuthorized) {
+            saveBlock();
+            return;
+        }
+    }
+    
+    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus newStatus) {
+        if (newStatus == PHAuthorizationStatusAuthorized || (@available(iOS 14.0, *) && newStatus == PHAuthorizationStatusLimited)) {
+            saveBlock();
+        } else {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self showToast:@"Photos access denied" success:NO];
+            });
+        }
+    }];
+}
+
 + (void)saveMediaFromController:(UIViewController *)controller {
     if (!controller) return;
     
@@ -436,32 +647,26 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
         [feedback impactOccurred];
     } @catch (...) {}
     
-    // Check if video is playing or present
-    NSString *videoPath = [self findVideoPathInController:controller];
-    if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
-        if (UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(videoPath)) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                UISaveVideoAtPathToSavedPhotosAlbum(videoPath, [MediaSaver shared], @selector(video:didFinishSavingWithError:contextInfo:), NULL);
-            });
+    BOOL isVideo = isDisplayingVideo(controller.view);
+    if (isVideo) {
+        NSString *videoPath = [self findVideoPathInController:controller];
+        if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
+            [self saveVideoToPhotos:videoPath];
             return;
         }
-    }
-    
-    // Check for image
-    UIImage *image = [self findImageInView:controller.view];
-    if (image) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIImageWriteToSavedPhotosAlbum(image, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
-        });
+        [self showToast:@"Video is downloading, please wait..." success:NO];
         return;
     }
     
-    // Fallback: snapshot the view
+    UIImage *image = [self findImageInView:controller.view];
+    if (image) {
+        [self saveImageToPhotos:image];
+        return;
+    }
+    
     UIImage *snapshot = [self snapshotView:controller.view];
     if (snapshot) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIImageWriteToSavedPhotosAlbum(snapshot, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
-        });
+        [self saveImageToPhotos:snapshot];
         return;
     }
     
@@ -494,7 +699,7 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
         
         UIView *toast = [[UIView alloc] init];
         toast.tag = 998899;
-        toast.backgroundColor = [UIColor colorWithRed:0.18 green:0.18 blue:0.20 alpha:0.92];
+        toast.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.10 alpha:0.94];
         toast.layer.cornerRadius = 18;
         toast.clipsToBounds = YES;
         toast.layer.zPosition = 99999;

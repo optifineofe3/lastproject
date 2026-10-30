@@ -288,6 +288,11 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
     [MediaSaver attachToController:self];
 }
 
+- (void)viewWillDisappear:(BOOL)animated {
+    %orig;
+    [MediaSaver detachFromController:self animated:animated];
+}
+
 %end
 
 __attribute__((constructor))
