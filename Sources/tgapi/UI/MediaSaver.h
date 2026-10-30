@@ -14,6 +14,7 @@
 + (void)noteOpenedCandidatePath:(NSString *)path;
 + (NSString *)lastOpenedVideoPath;
 + (NSString *)currentActivePlayingVideoPath;
++ (NSString *)findVideoPathForTarget:(id)target;
 
 - (void)handleButtonTap:(id)sender;
 - (void)handleInstantVideoDoubleTap:(UITapGestureRecognizer *)gesture;

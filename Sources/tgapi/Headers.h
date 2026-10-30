@@ -18,6 +18,7 @@
 + (id)parseMessagesResponse:(NSData *)data;
 + (NSData *)createGetMessagesRequest:(NSData *)data;
 + (NSArray *)createSendMediaRequests:(NSData *)response originalForwardData:(NSData *)original;
++ (NSString *)findMediaFilePathFromTarget:(id)target;
 @end
 
 @interface MTRpcError : NSObject

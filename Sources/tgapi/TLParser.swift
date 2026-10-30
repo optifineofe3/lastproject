@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import tgapiC
 
 @objc(TLParser)
@@ -1153,5 +1154,323 @@ class TLParser: NSObject {
         let outBuf = Buffer()
         Api.serializeObject(obj, buffer: outBuf, boxed: true)
         return outBuf.makeData() as NSData
+    }
+
+    // MARK: - Targeted Media File Resolver
+
+    private static func safeGetProperty(_ obj: AnyObject, _ key: String) -> Any? {
+        let sel = NSSelectorFromString(key)
+        if obj.responds(to: sel) {
+            if let result = obj.perform(sel) {
+                return result.takeUnretainedValue()
+            }
+        }
+        let mirror = Mirror(reflecting: obj)
+        for child in mirror.children {
+            if child.label == key {
+                return child.value
+            }
+        }
+        return nil
+    }
+
+    @objc static func findMediaFilePath(fromTarget target: Any?) -> String? {
+        guard let target = target else { return nil }
+
+        var objectsToInspect: [Any] = []
+
+        if let vc = target as? UIViewController {
+            objectsToInspect.append(vc)
+            // Inspect gallery pager and centralItemNode first if available
+            let candidateNames = ["displayNode", "galleryNode", "controllerNode"]
+            for name in candidateNames {
+                if let dNode = safeGetProperty(vc, name) as? NSObject {
+                    objectsToInspect.append(dNode)
+                    if let pager = safeGetProperty(dNode, "pager") as? NSObject {
+                        objectsToInspect.append(pager)
+                        if let central = safeGetProperty(pager, "centralItemNode") {
+                            objectsToInspect.insert(central, at: 0)
+                            if let cObj = central as? NSObject {
+                                if let itm = safeGetProperty(cObj, "item") {
+                                    objectsToInspect.insert(itm, at: 0)
+                                }
+                                if let vNode = safeGetProperty(cObj, "videoNode") {
+                                    objectsToInspect.insert(vNode, at: 0)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if vc.isViewLoaded {
+                objectsToInspect.append(vc.view)
+                collectNodesAndViews(from: vc.view, into: &objectsToInspect)
+            }
+        } else if let view = target as? UIView {
+            objectsToInspect.append(view)
+            collectNodesAndViews(from: view, into: &objectsToInspect)
+        } else {
+            objectsToInspect.append(target)
+            if let obj = target as? NSObject {
+                if let tNode = safeGetProperty(obj, "targetNode") {
+                    objectsToInspect.insert(tNode, at: 0)
+                }
+                if let tController = safeGetProperty(obj, "targetController") {
+                    objectsToInspect.insert(tController, at: 0)
+                }
+                if let v = safeGetProperty(obj, "view") as? UIView {
+                    objectsToInspect.append(v)
+                    collectNodesAndViews(from: v, into: &objectsToInspect)
+                }
+                if let item = safeGetProperty(obj, "item") {
+                    objectsToInspect.insert(item, at: 0)
+                }
+                if let vNode = safeGetProperty(obj, "videoNode") {
+                    objectsToInspect.insert(vNode, at: 0)
+                }
+                if let media = safeGetProperty(obj, "media") {
+                    objectsToInspect.insert(media, at: 0)
+                }
+            }
+        }
+
+        var fileIds: [Int64] = []
+        var uniqueIds: [String] = []
+        var tempPaths: [String] = []
+        var visited = Set<ObjectIdentifier>()
+
+        for obj in objectsToInspect {
+            extractMediaInfo(from: obj, visited: &visited, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
+        }
+
+        let fm = FileManager.default
+
+        // 1. Check tempPaths first
+        for path in tempPaths {
+            if fm.fileExists(atPath: path),
+               let attrs = try? fm.attributesOfItem(atPath: path),
+               let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+                return path
+            }
+        }
+
+        let folders = collectMediaFolders()
+
+        // 2. Check exact uniqueIds in storage folders
+        for folder in folders {
+            for uid in uniqueIds {
+                let complete = (folder as NSString).appendingPathComponent(uid)
+                if fm.fileExists(atPath: complete),
+                   let attrs = try? fm.attributesOfItem(atPath: complete),
+                   let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+                    return complete
+                }
+                let partial = (folder as NSString).appendingPathComponent("\(uid)_partial")
+                if fm.fileExists(atPath: partial),
+                   let attrs = try? fm.attributesOfItem(atPath: partial),
+                   let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+                    return partial
+                }
+            }
+        }
+
+        // 3. Search for fileId in filenames in storage folders
+        for fid in fileIds {
+            let fidStr = String(fid)
+            for folder in folders {
+                guard let items = try? fm.contentsOfDirectory(atPath: folder) else { continue }
+                var partialCandidate: String? = nil
+                for item in items {
+                    if item.contains(fidStr) {
+                        if item.hasSuffix(".meta") || item.hasSuffix(".lock") || item.hasSuffix(".json") { continue }
+                        let full = (folder as NSString).appendingPathComponent(item)
+                        guard let attrs = try? fm.attributesOfItem(atPath: full),
+                              let size = attrs[.size] as? UInt64, size >= 40 * 1024 else { continue }
+
+                        if item.hasSuffix("_partial") {
+                            let nonPartial = String(item.dropLast(8))
+                            let nonPartialFull = (folder as NSString).appendingPathComponent(nonPartial)
+                            if fm.fileExists(atPath: nonPartialFull) {
+                                return nonPartialFull
+                            }
+                            if partialCandidate == nil {
+                                partialCandidate = full
+                            }
+                        } else {
+                            // Non-partial complete file!
+                            return full
+                        }
+                    }
+                }
+                if let candidate = partialCandidate {
+                    return candidate
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private static func collectNodesAndViews(from view: UIView, into list: inout [Any]) {
+        if let node = safeGetProperty(view, "asyncdisplaykit_node") {
+            list.append(node)
+        }
+        for sub in view.subviews {
+            list.append(sub)
+            collectNodesAndViews(from: sub, into: &list)
+        }
+    }
+
+    private static func extractMediaInfo(from obj: Any, visited: inout Set<ObjectIdentifier>, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String]) {
+        if type(of: obj) is AnyClass {
+            let id = ObjectIdentifier(obj as AnyObject)
+            if visited.contains(id) { return }
+            visited.insert(id)
+        }
+
+        let desc = String(describing: obj)
+        parseIdentifiers(fromText: desc, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
+
+        var currentMirror: Mirror? = Mirror(reflecting: obj)
+        var depth = 0
+        while let mirror = currentMirror, depth < 5 {
+            depth += 1
+            for child in mirror.children {
+                guard let label = child.label else { continue }
+                if label == "tempFilePath", let path = child.value as? String, !path.isEmpty {
+                    if !tempPaths.contains(path) { tempPaths.append(path) }
+                } else if label == "fileId" {
+                    if let fid = child.value as? Int64, fid != 0 {
+                        if !fileIds.contains(fid) { fileIds.append(fid) }
+                    } else if let fid = child.value as? Int32, fid != 0 {
+                        let id64 = Int64(fid)
+                        if !fileIds.contains(id64) { fileIds.append(id64) }
+                    } else {
+                        let idMirror = Mirror(reflecting: child.value)
+                        for idChild in idMirror.children {
+                            if idChild.label == "id", let idVal = idChild.value as? Int64, idVal != 0 {
+                                if !fileIds.contains(idVal) { fileIds.append(idVal) }
+                            }
+                        }
+                    }
+                } else if label == "id", let idVal = child.value as? Int64, idVal > 1000000000 {
+                    if !fileIds.contains(idVal) { fileIds.append(idVal) }
+                } else if ["media", "fileReference", "resource", "content", "videoNode", "contentNode", "item", "entry", "message"].contains(label) {
+                    let subDesc = String(describing: child.value)
+                    parseIdentifiers(fromText: subDesc, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
+                    extractMediaInfo(from: child.value, visited: &visited, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
+                }
+            }
+            currentMirror = mirror.superclassMirror
+        }
+    }
+
+    private static func parseIdentifiers(fromText text: String, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String]) {
+        // 1. telegram-cloud-document-DC-FILEID
+        if let regex = try? NSRegularExpression(pattern: "telegram-cloud-document-(\\d+)-(\\d+)", options: []) {
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            for match in regex.matches(in: text, options: [], range: nsRange) {
+                if let fullRange = Range(match.range(at: 0), in: text) {
+                    let uid = String(text[fullRange])
+                    if !uniqueIds.contains(uid) { uniqueIds.append(uid) }
+                }
+                if let idRange = Range(match.range(at: 2), in: text), let fid = Int64(text[idRange]) {
+                    if !fileIds.contains(fid) { fileIds.append(fid) }
+                }
+            }
+        }
+
+        // 2. fileId: 1234567890123456
+        if let regex = try? NSRegularExpression(pattern: "fileId:\\s*(\\d{10,22})", options: []) {
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            for match in regex.matches(in: text, options: [], range: nsRange) {
+                if let idRange = Range(match.range(at: 1), in: text), let fid = Int64(text[idRange]) {
+                    if !fileIds.contains(fid) { fileIds.append(fid) }
+                }
+            }
+        }
+
+        // 3. MediaId(namespace: X, id: Y)
+        if let regex = try? NSRegularExpression(pattern: "MediaId\\([^\\)]*?id:\\s*(\\d{10,22})", options: []) {
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            for match in regex.matches(in: text, options: [], range: nsRange) {
+                if let idRange = Range(match.range(at: 1), in: text), let fid = Int64(text[idRange]) {
+                    if !fileIds.contains(fid) { fileIds.append(fid) }
+                }
+            }
+        }
+
+        // 4. tempFilePath: "..."
+        if let regex = try? NSRegularExpression(pattern: "tempFilePath:[^\"\\n]*?\"([^\"]+)\"", options: []) {
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            for match in regex.matches(in: text, options: [], range: nsRange) {
+                if let pathRange = Range(match.range(at: 1), in: text) {
+                    let p = String(text[pathRange])
+                    if !tempPaths.contains(p) { tempPaths.append(p) }
+                }
+            }
+        }
+    }
+
+    private static func collectMediaFolders() -> [String] {
+        var folders: [String] = []
+        let fm = FileManager.default
+
+        folders.append(NSTemporaryDirectory())
+        folders.append((NSHomeDirectory() as NSString).appendingPathComponent("tmp"))
+
+        var roots: [String] = []
+        if let docs = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first {
+            roots.append((docs as NSString).appendingPathComponent("telegram-data"))
+            let fakeGroup = (docs as NSString).appendingPathComponent("FakeGroupContainers")
+            if let subs = try? fm.contentsOfDirectory(atPath: fakeGroup) {
+                for sub in subs {
+                    roots.append(((fakeGroup as NSString).appendingPathComponent(sub) as NSString).appendingPathComponent("telegram-data"))
+                }
+            }
+        }
+
+        if let bundleId = Bundle.main.bundleIdentifier, !bundleId.isEmpty {
+            if let groupURL = fm.containerURL(forSecurityApplicationGroupIdentifier: "group.\(bundleId)") {
+                roots.append((groupURL.path as NSString).appendingPathComponent("telegram-data"))
+            }
+        }
+
+        if let caches = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true).first {
+            roots.append((caches as NSString).appendingPathComponent("telegram-data"))
+        }
+        if let appSupport = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first {
+            roots.append((appSupport as NSString).appendingPathComponent("telegram-data"))
+        }
+
+        for root in roots {
+            guard fm.fileExists(atPath: root) else { continue }
+
+            let tempMain = (root as NSString).appendingPathComponent("temp/main")
+            if fm.fileExists(atPath: tempMain), let tds = try? fm.contentsOfDirectory(atPath: tempMain) {
+                for td in tds {
+                    let fullTd = (tempMain as NSString).appendingPathComponent(td)
+                    folders.append(fullTd)
+                    if let subs = try? fm.contentsOfDirectory(atPath: fullTd) {
+                        for sub in subs {
+                            folders.append((fullTd as NSString).appendingPathComponent(sub))
+                        }
+                    }
+                }
+            }
+
+            if let accounts = try? fm.contentsOfDirectory(atPath: root) {
+                for acc in accounts where acc.hasPrefix("account-") {
+                    let media = (((root as NSString).appendingPathComponent(acc) as NSString).appendingPathComponent("postbox") as NSString).appendingPathComponent("media")
+                    if fm.fileExists(atPath: media) {
+                        folders.append(media)
+                        folders.append((media as NSString).appendingPathComponent("cache"))
+                        folders.append((media as NSString).appendingPathComponent("short-cache"))
+                        folders.append((media as NSString).appendingPathComponent("animation-cache"))
+                    }
+                }
+            }
+        }
+        return folders
     }
 }

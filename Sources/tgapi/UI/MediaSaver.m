@@ -1,4 +1,5 @@
 #import "MediaSaver.h"
+#import "Headers.h"
 #import "../fishhook/fishhook.h"
 #import <Photos/Photos.h>
 #import <AVFoundation/AVFoundation.h>
@@ -404,6 +405,20 @@ static BOOL isDisplayingVideo(UIView *view) {
         return YES;
     }
     
+    @try {
+        id node = [view valueForKey:@"asyncdisplaykit_node"];
+        if (node) {
+            NSString *ncls = NSStringFromClass([node class]);
+            if ([ncls containsString:@"UniversalVideo"] ||
+                [ncls containsString:@"InstantVideo"] ||
+                [ncls containsString:@"ChatVideoGallery"]) {
+                if (isViewVisibleInWindow(view)) {
+                    return YES;
+                }
+            }
+        }
+    } @catch (...) {}
+    
     Class sampleBufferClass = NSClassFromString(@"AVSampleBufferDisplayLayer");
     Class mediaLayerClass = NSClassFromString(@"MediaPlayerNodeLayer");
     if ((sampleBufferClass && [view.layer isKindOfClass:sampleBufferClass]) ||
@@ -523,7 +538,7 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
     }
     
     if (animated) {
-        [UIView animateWithDuration:0.15 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        [UIView animateWithDuration:0.10 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
             btn.alpha = 0.0;
             btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
         } completion:^(BOOL finished) {
@@ -643,7 +658,8 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         [feedback impactOccurred];
     } @catch (...) {}
     
-    NSString *videoPath = [MediaSaver findVideoPathInController:nil];
+    id target = btn.targetNode ?: btn;
+    NSString *videoPath = [MediaSaver findVideoPathForTarget:target];
     if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
         [MediaSaver saveVideoToPhotos:videoPath];
         return;
@@ -684,7 +700,8 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         [feedback impactOccurred];
     } @catch (...) {}
     
-    NSString *videoPath = [MediaSaver findVideoPathInController:nil];
+    id target = gesture.view;
+    NSString *videoPath = [MediaSaver findVideoPathForTarget:target];
     if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
         [MediaSaver saveVideoToPhotos:videoPath];
         return;
@@ -693,12 +710,64 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
     [MediaSaver showToast:@"Play round video first to cache it" success:NO];
 }
 
-+ (NSString *)findVideoPathInController:(UIViewController *)controller {
+static NSString *extractPathFromPlayerLayer(CALayer *layer) {
+    if (!layer) return nil;
+    @try {
+        if ([layer respondsToSelector:@selector(player)]) {
+            id player = [layer performSelector:@selector(player)];
+            if (player && [player respondsToSelector:@selector(currentItem)]) {
+                id item = [player performSelector:@selector(currentItem)];
+                if (item && [item respondsToSelector:@selector(asset)]) {
+                    id asset = [item performSelector:@selector(asset)];
+                    if (asset && [asset respondsToSelector:@selector(URL)]) {
+                        NSURL *url = [asset performSelector:@selector(URL)];
+                        if (url && url.isFileURL && url.path) {
+                            return url.path;
+                        }
+                    }
+                }
+            }
+        }
+    } @catch (...) {}
+    for (CALayer *sub in layer.sublayers) {
+        NSString *found = extractPathFromPlayerLayer(sub);
+        if (found) return found;
+    }
+    return nil;
+}
+
++ (NSString *)findVideoPathForTarget:(id)target {
     NSFileManager *fm = [NSFileManager defaultManager];
     
-    // 1. Highest Priority: The video that is currently being played/decoded by Telegram right now!
+    // 1. Precise binding via TLParser Swift reflection (centralItemNode / fileId / uniqueId / tempPath)
+    if ([TLParser respondsToSelector:@selector(findMediaFilePathFromTarget:)]) {
+        NSString *path = [TLParser findMediaFilePathFromTarget:target];
+        if (path && [fm fileExistsAtPath:path]) {
+            return [self ensureVideoExtension:path];
+        }
+    }
+    
+    // 2. AVPlayerLayer on target view or subviews
+    UIView *view = nil;
+    if ([target isKindOfClass:[UIViewController class]]) {
+        view = [(UIViewController *)target isViewLoaded] ? [(UIViewController *)target view] : nil;
+    } else if ([target isKindOfClass:[UIView class]]) {
+        view = (UIView *)target;
+    } else if ([target respondsToSelector:@selector(view)]) {
+        @try {
+            view = [target performSelector:@selector(view)];
+        } @catch (...) {}
+    }
+    if (view) {
+        NSString *playerPath = extractPathFromPlayerLayer(view.layer);
+        if (playerPath && [fm fileExistsAtPath:playerPath]) {
+            return [self ensureVideoExtension:playerPath];
+        }
+    }
+    
+    // 3. Last opened candidate or active playing video from Telegram decoder (only if very recent)
     NSString *active = getCurrentPlayingVideoPath();
-    if (active) {
+    if (active && (CFAbsoluteTimeGetCurrent() - last_played_video_time < 30.0)) {
         if ([active hasSuffix:@"_partial"]) {
             NSString *complete = [active substringToIndex:active.length - 8];
             if ([fm fileExistsAtPath:complete]) {
@@ -713,7 +782,6 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         }
     }
     
-    // 2. Check last opened candidate from hook_open
     NSString *recent = [self lastOpenedVideoPath];
     if (recent && [fm fileExistsAtPath:recent]) {
         if ([recent hasSuffix:@"_partial"]) {
@@ -725,102 +793,11 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         return [self ensureVideoExtension:recent];
     }
     
-    // 3. Candidate directory scan fallback
-    NSMutableArray<NSString *> *searchFolders = [NSMutableArray array];
-    
-    [searchFolders addObject:NSTemporaryDirectory()];
-    [searchFolders addObject:[NSHomeDirectory() stringByAppendingPathComponent:@"tmp"]];
-    
-    NSMutableArray<NSString *> *dataRoots = [NSMutableArray array];
-    
-    NSString *docs = [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-    if (docs) {
-        [dataRoots addObject:[docs stringByAppendingPathComponent:@"telegram-data"]];
-        
-        NSString *fakeGroup = [docs stringByAppendingPathComponent:@"FakeGroupContainers"];
-        for (NSString *sub in [fm contentsOfDirectoryAtPath:fakeGroup error:nil]) {
-            [dataRoots addObject:[[fakeGroup stringByAppendingPathComponent:sub] stringByAppendingPathComponent:@"telegram-data"]];
-        }
-    }
-    
-    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
-    if (bundleId.length > 0) {
-        NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:[NSString stringWithFormat:@"group.%@", bundleId]];
-        if (groupURL && groupURL.path) {
-            [dataRoots addObject:[groupURL.path stringByAppendingPathComponent:@"telegram-data"]];
-        }
-    }
-    
-    NSString *caches = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) firstObject];
-    if (caches) {
-        [dataRoots addObject:[caches stringByAppendingPathComponent:@"telegram-data"]];
-    }
-    
-    for (NSString *root in dataRoots) {
-        if (![fm fileExistsAtPath:root]) continue;
-        
-        NSString *tempMain = [root stringByAppendingPathComponent:@"temp/main"];
-        if ([fm fileExistsAtPath:tempMain]) {
-            for (NSString *td in [fm contentsOfDirectoryAtPath:tempMain error:nil]) {
-                NSString *fullTd = [tempMain stringByAppendingPathComponent:td];
-                [searchFolders addObject:fullTd];
-                for (NSString *sub in [fm contentsOfDirectoryAtPath:fullTd error:nil]) {
-                    [searchFolders addObject:[fullTd stringByAppendingPathComponent:sub]];
-                }
-            }
-        }
-        
-        for (NSString *acc in [fm contentsOfDirectoryAtPath:root error:nil]) {
-            if ([acc hasPrefix:@"account-"]) {
-                NSString *mediaPath = [[root stringByAppendingPathComponent:acc] stringByAppendingPathComponent:@"postbox/media"];
-                if ([fm fileExistsAtPath:mediaPath]) {
-                    [searchFolders addObject:mediaPath];
-                    [searchFolders addObject:[mediaPath stringByAppendingPathComponent:@"cache"]];
-                    [searchFolders addObject:[mediaPath stringByAppendingPathComponent:@"short-cache"]];
-                    [searchFolders addObject:[mediaPath stringByAppendingPathComponent:@"animation-cache"]];
-                }
-            }
-        }
-    }
-    
-    NSDate *now = [NSDate date];
-    NSString *bestVideo = nil;
-    NSDate *newestModDate = [NSDate distantPast];
-    
-    for (NSString *folder in searchFolders) {
-        NSArray *items = [fm contentsOfDirectoryAtPath:folder error:nil];
-        for (NSString *item in items) {
-            if ([item hasSuffix:@".meta"] || [item hasSuffix:@".lock"] || [item hasSuffix:@".json"]) continue;
-            
-            NSString *fullPath = [folder stringByAppendingPathComponent:item];
-            NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
-            if (!attrs || [attrs[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
-            
-            unsigned long long size = [attrs fileSize];
-            if (size < 40 * 1024) continue;
-            
-            NSDate *mod = attrs[NSFileModificationDate];
-            if (!mod || [now timeIntervalSinceDate:mod] > 3600.0) continue;
-            
-            if (isVideoFile(fullPath)) {
-                if ([mod compare:newestModDate] == NSOrderedDescending) {
-                    newestModDate = mod;
-                    bestVideo = fullPath;
-                }
-            }
-        }
-    }
-    
-    if (bestVideo) {
-        if ([bestVideo hasSuffix:@"_partial"]) {
-            NSString *complete = [bestVideo substringToIndex:bestVideo.length - 8];
-            if ([fm fileExistsAtPath:complete]) {
-                bestVideo = complete;
-            }
-        }
-        return [self ensureVideoExtension:bestVideo];
-    }
     return nil;
+}
+
++ (NSString *)findVideoPathInController:(UIViewController *)controller {
+    return [self findVideoPathForTarget:controller];
 }
 
 + (UIImage *)findImageInView:(UIView *)view {
@@ -911,13 +888,14 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         [feedback impactOccurred];
     } @catch (...) {}
     
+    NSString *videoPath = [self findVideoPathForTarget:controller];
+    if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
+        [self saveVideoToPhotos:videoPath];
+        return;
+    }
+    
     BOOL isVideo = isDisplayingVideo(controller.view);
     if (isVideo) {
-        NSString *videoPath = [self findVideoPathInController:controller];
-        if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
-            [self saveVideoToPhotos:videoPath];
-            return;
-        }
         [self showToast:@"Video is downloading, please wait..." success:NO];
         return;
     }

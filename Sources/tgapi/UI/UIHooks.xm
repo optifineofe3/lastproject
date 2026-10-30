@@ -319,7 +319,7 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
     UIView *btn = [v viewWithTag:998811] ?: [v.window viewWithTag:998811];
     if (btn) {
         if (animated) {
-            [UIView animateWithDuration:0.25 delay:0.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+            [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
                 btn.alpha = hidden ? 0.0 : 1.0;
                 btn.transform = hidden ? CGAffineTransformMakeScale(0.85, 0.85) : CGAffineTransformIdentity;
             } completion:nil];
@@ -330,6 +330,35 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
     }
 }
 
+- (void)updateDismissTransition:(CGFloat)value {
+    %orig;
+    UIView *v = [(ASDisplayNode *)self view];
+    UIView *btn = [v viewWithTag:998811] ?: [v.window viewWithTag:998811];
+    if (btn) {
+        btn.alpha = value;
+        if (value < 0.99) {
+            CGFloat scale = 0.85 + 0.15 * fmax(0.0, fmin(1.0, value));
+            btn.transform = CGAffineTransformMakeScale(scale, scale);
+        } else {
+            btn.transform = CGAffineTransformIdentity;
+        }
+    }
+}
+
+- (void)animateOutWithAnimateContent:(BOOL)animateContent completion:(id)completion {
+    UIView *v = [(ASDisplayNode *)self view];
+    UIView *btn = [v viewWithTag:998811] ?: [v.window viewWithTag:998811];
+    if (btn) {
+        [UIView animateWithDuration:0.10 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+            btn.alpha = 0.0;
+            btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
+        } completion:^(BOOL finished) {
+            [btn removeFromSuperview];
+        }];
+    }
+    %orig;
+}
+
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView {
     %orig;
     UIView *v = [(ASDisplayNode *)self view];
@@ -338,6 +367,12 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
         CGFloat distanceFromEquilibrium = scrollView.contentOffset.y - scrollView.contentSize.height / 3.0;
         CGFloat transition = 1.0 - fmin(1.0, fmax(0.0, fabs(distanceFromEquilibrium) / 50.0));
         btn.alpha = transition;
+        if (transition < 0.99) {
+            CGFloat scale = 0.85 + 0.15 * fmax(0.0, fmin(1.0, transition));
+            btn.transform = CGAffineTransformMakeScale(scale, scale);
+        } else {
+            btn.transform = CGAffineTransformIdentity;
+        }
     }
 }
 
@@ -433,6 +468,25 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 
 %end
 
+static Class findClassSubstr(const char *suffix) {
+    int numClasses = objc_getClassList(NULL, 0);
+    if (numClasses > 0) {
+        Class *classes = (Class *)malloc(sizeof(Class) * numClasses);
+        if (!classes) return Nil;
+        numClasses = objc_getClassList(classes, numClasses);
+        for (int i = 0; i < numClasses; i++) {
+            const char *name = class_getName(classes[i]);
+            if (name && strstr(name, suffix) != NULL) {
+                Class found = classes[i];
+                free(classes);
+                return found;
+            }
+        }
+        free(classes);
+    }
+    return Nil;
+}
+
 __attribute__((constructor))
 static void hook() {
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
@@ -450,6 +504,9 @@ static void hook() {
         if (!phoneEntryClass) {
             phoneEntryClass = objc_getClass("_TtC15AuthorizationUI45AuthorizationSequencePhoneEntryControllerNode");
         }
+        if (!phoneEntryClass) {
+            phoneEntryClass = findClassSubstr("AuthorizationSequencePhoneEntryControllerNode");
+        }
 
         if (phoneEntryClass) {
             %init(LoginQRGroup, AuthorizationSequencePhoneEntryControllerNode = phoneEntryClass);
@@ -459,18 +516,27 @@ static void hook() {
         if (!galleryNodeClass) {
             galleryNodeClass = objc_getClass("_TtC9GalleryUI21GalleryControllerNode");
         }
+        if (!galleryNodeClass) {
+            galleryNodeClass = findClassSubstr("GalleryControllerNode");
+        }
         if (galleryNodeClass) {
             %init(GalleryNodeGroup, GalleryControllerNode = galleryNodeClass);
         }
 
         Class displayViewClass = objc_getClass("_ASDisplayView");
+        if (!displayViewClass) {
+            displayViewClass = findClassSubstr("_ASDisplayView");
+        }
         if (displayViewClass) {
             %init(DisplayViewGroup, _ASDisplayView = displayViewClass);
         }
 
         Class instantVideoClass = objc_getClass("ChatMessageInteractiveInstantVideoNode.ChatMessageInteractiveInstantVideoNode");
         if (!instantVideoClass) {
-            instantVideoClass = objc_getClass("_TtC41ChatMessageInteractiveInstantVideoNode37ChatMessageInteractiveInstantVideoNode");
+            instantVideoClass = objc_getClass("_TtC41ChatMessageInteractiveInstantVideoNode41ChatMessageInteractiveInstantVideoNode");
+        }
+        if (!instantVideoClass) {
+            instantVideoClass = findClassSubstr("ChatMessageInteractiveInstantVideoNode");
         }
         if (instantVideoClass) {
             %init(InstantVideoGroup, ChatMessageInteractiveInstantVideoNode = instantVideoClass);
@@ -478,7 +544,10 @@ static void hook() {
 
         Class tapGestureClass = objc_getClass("Display.TapLongTapOrDoubleTapGestureRecognizer");
         if (!tapGestureClass) {
-            tapGestureClass = objc_getClass("_TtC7Display37TapLongTapOrDoubleTapGestureRecognizer");
+            tapGestureClass = objc_getClass("_TtC7Display39TapLongTapOrDoubleTapGestureRecognizer");
+        }
+        if (!tapGestureClass) {
+            tapGestureClass = findClassSubstr("TapLongTapOrDoubleTapGestureRecognizer");
         }
         if (tapGestureClass) {
             %init(TapGestureGroup, TapLongTapOrDoubleTapGestureRecognizer = tapGestureClass);
