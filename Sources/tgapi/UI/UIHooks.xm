@@ -12,6 +12,12 @@
 - (void)__handle5PleTap;
 @end
 
+@interface TabBarNode : ASDisplayNode
+@end
+
+@interface PeerInfoScreenItemNode : ASDisplayNode
+@end
+
 static ThreeFingerGestureHandler *gestureHandler = nil;
 static __weak TGLocalization *TGLocalizationShared = nil;
 
@@ -212,13 +218,20 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 - (NSString *)mimeType;
 @end
 
+@interface _TtCC20StoryContainerScreen32StoryItemSetContainerComponent4View : UIView
+- (void)requestSave;
+@end
+
 %hook _TtC12TelegramCore16TelegramMediaFile
 
 - (BOOL)isVoice {
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:kSendAsVoice]) {
-        return %orig;
+    BOOL orig = %orig;
+    if (orig) {
+        return YES;
     }
-    if (%orig) return YES;
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:kSendAsVoice]) {
+        return orig;
+    }
     NSString *mime = [self mimeType];
     if ([mime hasPrefix:@"audio/"]) {
         return YES;
@@ -233,12 +246,13 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 - (void)didMoveToWindow {
     %orig;
     if (![[NSUserDefaults standardUserDefaults] boolForKey:kDownloadStories]) return;
-    if (!self.window) return;
+    UIView *view = (UIView *)self;
+    if (!view.window) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         @try {
             if ([[NSUserDefaults standardUserDefaults] boolForKey:kDownloadStories]) {
                 if ([self respondsToSelector:@selector(requestSave)]) {
-                    [self performSelector:@selector(requestSave)];
+                    [self requestSave];
                 }
             }
         } @catch (NSException *e) {}
