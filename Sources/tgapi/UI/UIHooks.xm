@@ -145,13 +145,17 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 
 %group LoginQRGroup
 
+@interface AuthorizationSequencePhoneEntryControllerNode : ASDisplayNode
+@end
+
 %hook AuthorizationSequencePhoneEntryControllerNode
 
 - (void)didLoad {
     %orig;
 
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIView *view = self.view;
+        ASDisplayNode *node = (ASDisplayNode *)self;
+        UIView *view = [node view];
         if (!view) return;
 
         if ([view viewWithTag:998877]) return;
