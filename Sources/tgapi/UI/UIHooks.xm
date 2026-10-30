@@ -143,6 +143,8 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 
 %end
 
+%group LoginQRGroup
+
 %hook AuthorizationSequencePhoneEntryControllerNode
 
 - (void)didLoad {
@@ -196,21 +198,23 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 
 %end
 
+%end
+
 __attribute__((constructor))
 static void hook() {
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        Class phoneEntryClass = objc_getClass("AuthorizationUI.AuthorizationSequencePhoneEntryControllerNode");
-        if (!phoneEntryClass) {
-            phoneEntryClass = objc_getClass("_TtC15AuthorizationUI45AuthorizationSequencePhoneEntryControllerNode");
-        }
-
 	 	%init(
 		    TabBarNode = objc_getClass("TabBarUI.TabBarNode"),
             PeerInfoScreenItemNode = objc_getClass("PeerInfoScreen.PeerInfoScreenItemNode")
 		);
 
+        Class phoneEntryClass = objc_getClass("AuthorizationUI.AuthorizationSequencePhoneEntryControllerNode");
+        if (!phoneEntryClass) {
+            phoneEntryClass = objc_getClass("_TtC15AuthorizationUI45AuthorizationSequencePhoneEntryControllerNode");
+        }
+
         if (phoneEntryClass) {
-            %init(AuthorizationSequencePhoneEntryControllerNode = phoneEntryClass);
+            %init(LoginQRGroup, AuthorizationSequencePhoneEntryControllerNode = phoneEntryClass);
         }
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
