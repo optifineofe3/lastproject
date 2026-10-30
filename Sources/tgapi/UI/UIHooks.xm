@@ -204,6 +204,49 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 
 %end
 
+@interface LeadDownloadBoost : NSObject
++ (void)install;
+@end
+
+@interface _TtC12TelegramCore16TelegramMediaFile : NSObject
+- (NSString *)mimeType;
+@end
+
+%hook _TtC12TelegramCore16TelegramMediaFile
+
+- (BOOL)isVoice {
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:kSendAsVoice]) {
+        return %orig;
+    }
+    if (%orig) return YES;
+    NSString *mime = [self mimeType];
+    if ([mime hasPrefix:@"audio/"]) {
+        return YES;
+    }
+    return NO;
+}
+
+%end
+
+%hook _TtCC20StoryContainerScreen32StoryItemSetContainerComponent4View
+
+- (void)didMoveToWindow {
+    %orig;
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:kDownloadStories]) return;
+    if (!self.window) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        @try {
+            if ([[NSUserDefaults standardUserDefaults] boolForKey:kDownloadStories]) {
+                if ([self respondsToSelector:@selector(requestSave)]) {
+                    [self performSelector:@selector(requestSave)];
+                }
+            }
+        } @catch (NSException *e) {}
+    });
+}
+
+%end
+
 __attribute__((constructor))
 static void hook() {
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -222,6 +265,8 @@ static void hook() {
         }
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [LeadDownloadBoost install];
+
             UIWindow *window = UIApplication.sharedApplication.keyWindow;
             if (window) {
                 if (!gestureHandler) {

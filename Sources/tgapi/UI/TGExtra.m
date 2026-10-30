@@ -22,6 +22,10 @@
 
 	[[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(didChangeFakeLocation)
+                                                 name:@"LeadLocationChanged"
+                                               object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(didChangeFakeLocation)
                                                  name:@"TweakLocationChanged"
                                                object:nil];
 }
@@ -142,7 +146,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		case READ_RECEIPT:
 		   return 2;
 		case MISC:
-		   return 4;
+		   return 8;
 		case FILE_FIXER:
 		   return 2;
 		case FAKE_LOCATION:
@@ -315,20 +319,52 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		cell.imageView.image = nil;
 
 		if (indexPath.row == 0) {
+			cell.imageView.image = [UIImage systemImageNamed:@"nosign"];
+			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"DISABLE_ALL_ADS_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"DISABLE_ALL_ADS_SUBTITLE");
 		}
 		else if (indexPath.row == 1) {
+			cell.imageView.image = [UIImage systemImageNamed:@"lock.open.fill"];
+			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"ENABLE_SAVING_PROTECTED_CONTENT_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"ENABLE_SAVING_PROTECTED_CONTENT_SUBTITLE");
 		}
 		else if (indexPath.row == 2) {
-			cell.textLabel.text = TGLoc(@"DISABLE_SCREEN_BLACKOUT_TITLE");
-			cell.detailTextLabel.text = TGLoc(@"DISABLE_SCREEN_BLACKOUT_SUBTITLE");
+			cell.imageView.image = [UIImage systemImageNamed:@"trash.slash.fill"];
+			cell.imageView.tintColor = [self dynamicColorBW];
+			cell.textLabel.text = TGLoc(@"ANTI_REVOKE_TITLE");
+			cell.detailTextLabel.text = TGLoc(@"ANTI_REVOKE_SUBTITLE");
 		}
 		else if (indexPath.row == 3) {
-			cell.textLabel.text = TGLoc(@"DISABLE_SCREENSHOT_RESTRICTION_TITLE");
-			cell.detailTextLabel.text = TGLoc(@"DISABLE_SCREENSHOT_RESTRICTION_SUBTITLE");
+			cell.imageView.image = [UIImage systemImageNamed:@"clock.arrow.circlepath"];
+			cell.imageView.tintColor = [self dynamicColorBW];
+			cell.textLabel.text = TGLoc(@"ANTI_AUTO_DELETE_TITLE");
+			cell.detailTextLabel.text = TGLoc(@"ANTI_AUTO_DELETE_SUBTITLE");
+		}
+		else if (indexPath.row == 4) {
+			cell.imageView.image = [UIImage systemImageNamed:@"camera.fill"];
+			cell.imageView.tintColor = [self dynamicColorBW];
+			cell.textLabel.text = TGLoc(@"ANTI_SCREENSHOT_TITLE");
+			cell.detailTextLabel.text = TGLoc(@"ANTI_SCREENSHOT_SUBTITLE");
+		}
+		else if (indexPath.row == 5) {
+			cell.imageView.image = [UIImage systemImageNamed:@"eye.fill"];
+			cell.imageView.tintColor = [self dynamicColorBW];
+			cell.textLabel.text = TGLoc(@"ANTI_SELF_DESTRUCT_TITLE");
+			cell.detailTextLabel.text = TGLoc(@"ANTI_SELF_DESTRUCT_SUBTITLE");
+		}
+		else if (indexPath.row == 6) {
+			cell.imageView.image = [UIImage systemImageNamed:@"square.and.arrow.down.fill"];
+			cell.imageView.tintColor = [self dynamicColorBW];
+			cell.textLabel.text = TGLoc(@"DOWNLOAD_STORIES_TITLE");
+			cell.detailTextLabel.text = TGLoc(@"DOWNLOAD_STORIES_SUBTITLE");
+		}
+		else if (indexPath.row == 7) {
+			cell.imageView.image = [UIImage systemImageNamed:@"mic.fill"];
+			cell.imageView.tintColor = [self dynamicColorBW];
+			cell.textLabel.text = TGLoc(@"SEND_AS_VOICE_TITLE");
+			cell.detailTextLabel.text = TGLoc(@"SEND_AS_VOICE_SUBTITLE");
 		}
 
 		UISwitch *toggle = (UISwitch *)cell.accessoryView;
@@ -520,8 +556,12 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
             switch (indexPath.row) {
                 case 0: return kDisableAllAds;
                 case 1: return kDisableForwardRestriction;
-                case 2: return kDisableScreenBlackout;
-                case 3: return kDisableScreenshotRestriction;
+                case 2: return kAntiRevoke;
+                case 3: return kAntiAutoDelete;
+                case 4: return kDisableScreenshotNotification;
+                case 5: return kAntiSelfDestruct;
+                case 6: return kDownloadStories;
+                case 7: return kSendAsVoice;
                 default: return nil;
             }
         case 3:

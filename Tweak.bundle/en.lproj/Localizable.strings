@@ -74,11 +74,23 @@
 "ENABLE_SAVING_PROTECTED_CONTENT_TITLE" = "Allow Saving Protected Content";
 "ENABLE_SAVING_PROTECTED_CONTENT_SUBTITLE" = "Bypass restrictions on saving and forwarding protected content.";
 
-"DISABLE_SCREEN_BLACKOUT_TITLE" = "Disable Screen Blackout";
-"DISABLE_SCREEN_BLACKOUT_SUBTITLE" = "Prevents screen from turning black when switching apps or locking.";
+"ANTI_REVOKE_TITLE" = "Save Deleted Messages";
+"ANTI_REVOKE_SUBTITLE" = "Keep messages in chat even after sender deletes them.";
 
-"DISABLE_SCREENSHOT_RESTRICTION_TITLE" = "Allow Screenshots of Protected Content";
-"DISABLE_SCREENSHOT_RESTRICTION_SUBTITLE" = "Bypasses screenshot and screen recording restrictions in secret chats and channels.";
+"ANTI_AUTO_DELETE_TITLE" = "Save Auto-Delete Messages";
+"ANTI_AUTO_DELETE_SUBTITLE" = "Prevent messages from being deleted after timer expires.";
+
+"ANTI_SCREENSHOT_TITLE" = "Allow Screenshots of Protected Content";
+"ANTI_SCREENSHOT_SUBTITLE" = "Bypass screenshot and screen recording restrictions.";
+
+"ANTI_SELF_DESTRUCT_TITLE" = "View Disappearing Media Freely";
+"ANTI_SELF_DESTRUCT_SUBTITLE" = "Open one-time and disappearing photos/videos without timer deletion.";
+
+"DOWNLOAD_STORIES_TITLE" = "Auto-Save Stories";
+"DOWNLOAD_STORIES_SUBTITLE" = "Automatically save opened stories to Camera Roll.";
+
+"SEND_AS_VOICE_TITLE" = "Send Audio as Voice";
+"SEND_AS_VOICE_SUBTITLE" = "Send audio files as voice messages.";
 
 /* File Picker */
 "FIX_FILE_PICKER_TITLE" = "Fix File Picker";

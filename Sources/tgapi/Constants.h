@@ -6,25 +6,37 @@
 #define kMessagesReadHistory 238054714
 #define kStoriesReadStories -1521034552
 #define kGetSponsoredMessages -1680673735
+#define kSendScreenshotNotification -1589618665
+// messages.readMessageContents#36a73f77 — sent when TTL/disappearing media is
+// opened
+#define kMessagesReadMessageContents 917472119
+// upload.getFile#be5335be / upload.getCdnFile#2000bcc3 — file chunk downloads
+#define kUploadGetFile      -1101843010
+#define kUploadGetCdnFile   -1691921240
 
-#define kActionIDTyping                 381645902                       // .sendMessageTypingAction
-#define kActionIDRecordingVideo        -1584933265                     // .sendMessageRecordVideoAction
-#define kActionIDUploadingVideo        -378127636                      // .sendMessageUploadVideoAction
-#define kActionIDRecordingAudio        -718310409                      // .sendMessageRecordAudioAction
-#define kActionIDUploadingVoice        -212740181                      // .sendMessageUploadAudioAction
-#define kActionIDUploadingPhoto        -774682074                      // .sendMessageUploadPhotoAction
-#define kActionIDUploadingFile         -1441998364                     // .sendMessageUploadDocumentAction
-#define kActionIDChoosingLocation      393186209                       // .sendMessageGeoLocationAction
-#define kActionIDChoosingContact       1653390447                      // .sendMessageChooseContactAction
-#define kActionIDPlayingGame           -580219064                      // .sendMessageGamePlayAction
-#define kActionIDRecordingRoundVideo   -1997373508                     // .sendMessageRecordRoundAction
-#define kActionIDUploadingRoundVideo   608050278                       // .sendMessageUploadRoundAction
-#define kActionIDSpeakingInGroupCall   -651419003                      // .speakingInGroupCallAction
-#define kActionIDReserverHistoryImport -606432698                      // .sendMessageHistoryImportAction
-#define kActionIDChoosingSticker       -1336228175                     // .sendMessageChooseStickerAction
-#define kActionIDEmojiInteraction      630664139                       // .sendMessageEmojiInteraction
-#define kActionIDEmojiAcknowledgement -1234857938                      // .sendMessageEmojiInteractionSeen
+#define kActionIDTyping 381645902           // .sendMessageTypingAction
+#define kActionIDRecordingVideo -1584933265 // .sendMessageRecordVideoAction
+#define kActionIDUploadingVideo -378127636  // .sendMessageUploadVideoAction
+#define kActionIDRecordingAudio -718310409  // .sendMessageRecordAudioAction
+#define kActionIDUploadingVoice -212740181  // .sendMessageUploadAudioAction
+#define kActionIDUploadingPhoto -774682074  // .sendMessageUploadPhotoAction
+#define kActionIDUploadingFile -1441998364  // .sendMessageUploadDocumentAction
+#define kActionIDChoosingLocation 393186209 // .sendMessageGeoLocationAction
+#define kActionIDChoosingContact 1653390447 // .sendMessageChooseContactAction
+#define kActionIDPlayingGame -580219064     // .sendMessageGamePlayAction
+#define kActionIDRecordingRoundVideo                                           \
+  -1997373508                                   // .sendMessageRecordRoundAction
+#define kActionIDUploadingRoundVideo 608050278  // .sendMessageUploadRoundAction
+#define kActionIDSpeakingInGroupCall -651419003 // .speakingInGroupCallAction
+#define kActionIDReserverHistoryImport                                         \
+  -606432698                                 // .sendMessageHistoryImportAction
+#define kActionIDChoosingSticker -1336228175 // .sendMessageChooseStickerAction
+#define kActionIDEmojiInteraction 630664139  // .sendMessageEmojiInteraction
+#define kActionIDEmojiAcknowledgement                                          \
+  -1234857938 // .sendMessageEmojiInteractionSeen
 
+#define kGhostModeEnabled @"LeadGhostModeEnabled"
+#define kGhostDetailsToggle @"LeadGhostDetailsToggle"
 #define kDisableOnlineStatus @"disableOnlineStatus"
 
 #define kDisableTypingStatus @"disableTypingStatus"
@@ -46,16 +58,31 @@
 
 #define kDisableMessageReadReceipt @"disableMessageReadReceipt"
 #define kDisableStoriesReadReceipt @"disableStoriesReadReceipt"
+#define kDisableScreenshotNotification @"disableScreenshotNotification"
 
+// FIX: was incorrectly mapped to "disableOnlineStatus" — now has its own key
 #define kDisableAllAds @"disableAllAds"
 #define kDisableForwardRestriction @"disableForwardRestriction"
-#define kDisableScreenBlackout @"disableScreenBlackout"
-#define kDisableScreenshotRestriction @"disableScreenshotRestriction"
-#define kSaveProtectedContent @"saveProtectedContent"
 
-#define FAKE_LOCATION_ENABLED_KEY @"TweakFakeLocation"
-#define FAKE_LATITUDE_KEY @"TweakSavedLatitude"
-#define FAKE_LONGITUDE_KEY @"TweakSavedLongitude"
+// Anti-features
+#define kAntiRevoke @"LeadAntiRevoke"
+#define kAntiEdit @"LeadAntiEdit"
+// Key for preventing disappearing/self-destruct media from being marked as read
+#define kAntiSelfDestruct @"LeadAntiSelfDestruct"
+#define kAntiAutoDelete @"LeadAntiAutoDelete"
+#define kConfirmCalls @"LeadConfirmCalls"
+#define kHideStories @"LeadHideStories"
+#define kDownloadStories @"LeadDownloadStories"
 
-#define FILE_PICKER_FIX_KEY @"TweakFixFilePicker"
-#define FILE_PICKER_PATH @"TweakFileFixUsingSomeUglyHacks"
+#define FAKE_LOCATION_ENABLED_KEY @"LeadFakeLocation"
+#define FAKE_LATITUDE_KEY @"LeadSavedLatitude"
+#define FAKE_LONGITUDE_KEY @"LeadSavedLongitude"
+
+#define FILE_PICKER_FIX_KEY @"LeadFixFilePicker"
+#define FILE_PICKER_PATH @"LeadFileFixUsingSomeUglyHacks"
+
+// Download speed boost: 0 = off, 1 = medium (512KB/8 parts), 2 = maximum (1MB/12 parts)
+#define kDownloadSpeedBoost @"LeadDownloadSpeedBoost"
+
+// Send audio/video files as voice messages
+#define kSendAsVoice @"LeadSendAsVoice"
