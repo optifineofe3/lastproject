@@ -1174,52 +1174,86 @@ class TLParser: NSObject {
         return nil
     }
 
+    private static func findCentralItemNode(from vc: UIViewController) -> AnyObject? {
+        guard vc.isViewLoaded, let rootView = vc.view else { return nil }
+
+        let screenCenter = rootView.bounds.midX
+        var closestNode: AnyObject? = nil
+        var minDistance = CGFloat.greatestFiniteMagnitude
+
+        func inspect(view: UIView) {
+            if view.isHidden || view.alpha < 0.05 { return }
+
+            if let node = safeGetProperty(view, "asyncdisplaykit_node") as? AnyObject {
+                let clsName = String(describing: type(of: node))
+                if clsName.contains("GalleryItemNode") {
+                    let rectInRoot = view.convert(view.bounds, to: rootView)
+                    if rectInRoot.width >= 80 && rectInRoot.height >= 80 {
+                        let dist = abs(rectInRoot.midX - screenCenter)
+                        if dist < minDistance {
+                            minDistance = dist
+                            closestNode = node
+                        }
+                    }
+                }
+            }
+
+            for sub in view.subviews {
+                inspect(view: sub)
+            }
+        }
+
+        inspect(view: rootView)
+
+        if minDistance < rootView.bounds.width * 0.6 {
+            return closestNode
+        }
+        return nil
+    }
+
     @objc static func findMediaFilePath(fromTarget target: Any?) -> String? {
         guard let target = target else { return nil }
 
         var objectsToInspect: [Any] = []
 
         if let vc = target as? UIViewController {
-            var foundCentral = false
-            let candidateNames = ["displayNode", "galleryNode", "controllerNode"]
-            for name in candidateNames {
-                if let dNode = safeGetProperty(vc, name) as? NSObject {
-                    if let pager = safeGetProperty(dNode, "pager") as? NSObject {
-                        if let central = safeGetProperty(pager, "centralItemNode") {
-                            foundCentral = true
-                            let cCls = String(describing: type(of: central))
-                            // If user is looking at a photo item, do not resolve any video
-                            if cCls.contains("Image") || cCls.contains("Photo") {
-                                return nil
-                            }
-                            objectsToInspect.append(central)
-                            if let cObj = central as? NSObject {
-                                if let itm = safeGetProperty(cObj, "item") {
-                                    objectsToInspect.append(itm)
-                                }
-                                if let vNode = safeGetProperty(cObj, "videoNode") {
-                                    objectsToInspect.append(vNode)
-                                }
-                                if let v = safeGetProperty(cObj, "view") as? UIView {
-                                    objectsToInspect.append(v)
-                                    collectNodesAndViews(from: v, into: &objectsToInspect)
-                                }
-                            }
-                        }
+            if let central = findCentralItemNode(from: vc) {
+                let cCls = String(describing: type(of: central))
+                // If user is looking at a photo item, do not resolve any video
+                if cCls.contains("Image") || cCls.contains("Photo") {
+                    return nil
+                }
+                objectsToInspect.append(central)
+                if let cObj = central as? NSObject {
+                    if let itm = safeGetProperty(cObj, "item") {
+                        objectsToInspect.append(itm)
+                    }
+                    if let vNode = safeGetProperty(cObj, "videoNode") {
+                        objectsToInspect.append(vNode)
+                    }
+                    if let v = safeGetProperty(cObj, "view") as? UIView {
+                        objectsToInspect.append(v)
+                        collectNodesAndViews(from: v, into: &objectsToInspect)
                     }
                 }
-            }
-            if !foundCentral {
-                objectsToInspect.append(vc)
-                if vc.isViewLoaded, let v = vc.view {
-                    objectsToInspect.append(v)
-                    collectNodesAndViews(from: v, into: &objectsToInspect)
+            } else {
+                let vcCls = String(describing: type(of: vc))
+                if !vcCls.contains("GalleryController") {
+                    objectsToInspect.append(vc)
+                    if vc.isViewLoaded, let v = vc.view {
+                        objectsToInspect.append(v)
+                        collectNodesAndViews(from: v, into: &objectsToInspect)
+                    }
                 }
             }
         } else if let view = target as? UIView {
             objectsToInspect.append(view)
             collectNodesAndViews(from: view, into: &objectsToInspect)
         } else {
+            let targetCls = String(describing: type(of: target))
+            if targetCls.contains("Image") || targetCls.contains("Photo") {
+                return nil
+            }
             objectsToInspect.append(target)
             if let obj = target as? NSObject {
                 if let tNode = safeGetProperty(obj, "targetNode") {

@@ -409,34 +409,78 @@ static id safeInvokeGetter(id obj, NSString *selectorName) {
     return nil;
 }
 
+static id findCentralGalleryItemNode(UIViewController *controller) {
+    if (!controller || !controller.isViewLoaded) return nil;
+    UIView *rootView = controller.view;
+    if (!rootView) return nil;
+    
+    CGFloat screenCenterX = CGRectGetMidX(rootView.bounds);
+    id bestNode = nil;
+    CGFloat minDistance = CGFLOAT_MAX;
+    
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:rootView];
+    while (queue.count > 0) {
+        UIView *v = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        
+        id node = nil;
+        @try {
+            node = [v valueForKey:@"asyncdisplaykit_node"];
+        } @catch (...) {}
+        
+        if (node) {
+            NSString *nodeCls = NSStringFromClass([node class]);
+            if ([nodeCls containsString:@"GalleryItemNode"]) {
+                if (!v.isHidden && v.alpha >= 0.05) {
+                    CGRect rectInRoot = [v convertRect:v.bounds toView:rootView];
+                    if (rectInRoot.size.width >= 80 && rectInRoot.size.height >= 80) {
+                        CGFloat midX = CGRectGetMidX(rectInRoot);
+                        CGFloat dist = fabs(midX - screenCenterX);
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            bestNode = node;
+                        }
+                    }
+                }
+            }
+        }
+        
+        for (UIView *sub in v.subviews) {
+            if (!sub.isHidden && sub.alpha >= 0.05) {
+                [queue addObject:sub];
+            }
+        }
+    }
+    
+    if (bestNode && minDistance < rootView.bounds.size.width * 0.6) {
+        return bestNode;
+    }
+    return nil;
+}
+
 static BOOL isControllerDisplayingVideo(UIViewController *controller) {
     if (!controller) return NO;
     
-    id central = nil;
-    @try {
-        id node = safeInvokeGetter(controller, @"galleryNode") ?:
-                  safeInvokeGetter(controller, @"controllerNode") ?:
-                  safeInvokeGetter(controller, @"displayNode");
-        if (node) {
-            id pager = safeInvokeGetter(node, @"pager");
-            if (pager) {
-                central = safeInvokeGetter(pager, @"centralItemNode");
-            }
-        }
-    } @catch (...) {}
+    NSString *controllerClass = NSStringFromClass([controller class]);
+    BOOL isGallery = [controllerClass containsString:@"GalleryController"];
     
+    id central = findCentralGalleryItemNode(controller);
     if (central) {
         NSString *cls = NSStringFromClass([central class]);
         if ([cls containsString:@"Image"] || [cls containsString:@"Photo"]) {
             return NO;
         }
-        if ([cls containsString:@"Video"] || [cls containsString:@"UniversalVideo"]) {
+        if ([cls containsString:@"Video"] || [cls containsString:@"UniversalVideo"] || [cls containsString:@"Animation"]) {
             return YES;
         }
         @try {
             id vn = safeInvokeGetter(central, @"videoNode");
             if (vn) return YES;
         } @catch (...) {}
+        return NO;
+    }
+    
+    if (isGallery) {
         return NO;
     }
     
@@ -462,7 +506,7 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
             @try {
                 id node = [view valueForKey:@"asyncdisplaykit_node"];
                 if (node && [node respondsToSelector:@selector(image)]) {
-                    checkImage([node performSelector:@selector(image)]);
+                    checkImage(safeInvokeGetter(node, @"image"));
                 }
             } @catch (...) {}
         }
@@ -566,8 +610,9 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
     if (!node) return;
     dispatch_async(dispatch_get_main_queue(), ^{
         UIView *v = nil;
-        if ([node respondsToSelector:@selector(view)]) {
-            v = [node performSelector:@selector(view)];
+        id viewVal = safeInvokeGetter(node, @"view");
+        if (viewVal && [viewVal isKindOfClass:[UIView class]]) {
+            v = (UIView *)viewVal;
         } else if ([node isKindOfClass:[UIView class]]) {
             v = (UIView *)node;
         }
@@ -725,15 +770,16 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
 static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     if (!layer) return nil;
     @try {
-        if ([layer respondsToSelector:@selector(player)]) {
-            id player = [layer performSelector:@selector(player)];
-            if (player && [player respondsToSelector:@selector(currentItem)]) {
-                id item = [player performSelector:@selector(currentItem)];
-                if (item && [item respondsToSelector:@selector(asset)]) {
-                    id asset = [item performSelector:@selector(asset)];
-                    if (asset && [asset respondsToSelector:@selector(URL)]) {
-                        NSURL *url = [asset performSelector:@selector(URL)];
-                        if (url && url.isFileURL && url.path) {
+        id player = safeInvokeGetter(layer, @"player");
+        if (player) {
+            id item = safeInvokeGetter(player, @"currentItem");
+            if (item) {
+                id asset = safeInvokeGetter(item, @"asset");
+                if (asset) {
+                    id urlObj = safeInvokeGetter(asset, @"URL");
+                    if (urlObj && [urlObj isKindOfClass:[NSURL class]]) {
+                        NSURL *url = (NSURL *)urlObj;
+                        if (url.isFileURL && url.path) {
                             return url.path;
                         }
                     }
@@ -750,6 +796,11 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 
 + (NSString *)findVideoPathForTarget:(id)target {
     if (!target) return nil;
+    
+    NSString *targetCls = NSStringFromClass([target class]);
+    if ([targetCls containsString:@"Image"] || [targetCls containsString:@"Photo"]) {
+        return nil;
+    }
     
     // If target is a UIViewController and it is not displaying a video (e.g. photo is viewed), do not look for video!
     if ([target isKindOfClass:[UIViewController class]]) {
@@ -775,16 +826,23 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         view = [(UIViewController *)target isViewLoaded] ? [(UIViewController *)target view] : nil;
     } else if ([target isKindOfClass:[UIView class]]) {
         view = (UIView *)target;
-    } else if ([target respondsToSelector:@selector(view)]) {
-        @try {
-            view = [target performSelector:@selector(view)];
-        } @catch (...) {}
+    } else {
+        id v = safeInvokeGetter(target, @"view");
+        if (v && [v isKindOfClass:[UIView class]]) {
+            view = (UIView *)v;
+        }
     }
     if (view) {
         NSString *playerPath = extractPathFromPlayerLayer(view.layer);
         if (playerPath && [fm fileExistsAtPath:playerPath]) {
             return [self ensureVideoExtension:playerPath];
         }
+    }
+    
+    // For gallery items/controllers, never fall back to old played videos from other pages!
+    BOOL isGallery = [targetCls containsString:@"GalleryItemNode"] || [targetCls containsString:@"GalleryController"];
+    if (isGallery) {
+        return nil;
     }
     
     // 3. Last opened candidate or active playing video from Telegram decoder (only if very recent within 5s)
@@ -910,9 +968,28 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         [feedback impactOccurred];
     } @catch (...) {}
     
-    BOOL isVideo = isControllerDisplayingVideo(controller);
+    id centralNode = findCentralGalleryItemNode(controller);
+    BOOL isVideo = NO;
+    if (centralNode) {
+        NSString *cls = NSStringFromClass([centralNode class]);
+        if ([cls containsString:@"Video"] || [cls containsString:@"UniversalVideo"] || [cls containsString:@"Animation"]) {
+            isVideo = YES;
+        } else if ([cls containsString:@"Image"] || [cls containsString:@"Photo"]) {
+            isVideo = NO;
+        } else {
+            @try {
+                if (safeInvokeGetter(centralNode, @"videoNode")) {
+                    isVideo = YES;
+                }
+            } @catch (...) {}
+        }
+    } else {
+        isVideo = isControllerDisplayingVideo(controller);
+    }
+    
     if (isVideo) {
-        NSString *videoPath = [self findVideoPathForTarget:controller];
+        id target = centralNode ?: controller;
+        NSString *videoPath = [self findVideoPathForTarget:target];
         if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
             [self saveVideoToPhotos:videoPath];
             return;
@@ -921,16 +998,37 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         return;
     }
     
-    UIImage *image = [self findImageInView:controller.view];
-    if (image) {
-        [self saveImageToPhotos:image];
-        return;
+    UIView *targetView = nil;
+    if (centralNode) {
+        id v = safeInvokeGetter(centralNode, @"view");
+        if (v && [v isKindOfClass:[UIView class]]) {
+            targetView = (UIView *)v;
+        }
+    }
+    if (!targetView && controller.isViewLoaded) {
+        targetView = controller.view;
     }
     
-    UIImage *snapshot = [self snapshotView:controller.view];
-    if (snapshot) {
-        [self saveImageToPhotos:snapshot];
-        return;
+    if (targetView) {
+        UIImage *image = [self findImageInView:targetView];
+        if (image) {
+            [self saveImageToPhotos:image];
+            return;
+        }
+        
+        if (controller.isViewLoaded && targetView != controller.view) {
+            image = [self findImageInView:controller.view];
+            if (image) {
+                [self saveImageToPhotos:image];
+                return;
+            }
+        }
+        
+        UIImage *snapshot = [self snapshotView:targetView];
+        if (snapshot) {
+            [self saveImageToPhotos:snapshot];
+            return;
+        }
     }
     
     [self showToast:@"Unable to save media" success:NO];
