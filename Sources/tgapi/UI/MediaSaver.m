@@ -398,23 +398,29 @@ static BOOL isDisplayingVideo(UIView *view) {
     return NO;
 }
 
+static id safeInvokeGetter(id obj, NSString *selectorName) {
+    if (!obj || !selectorName) return nil;
+    SEL sel = NSSelectorFromString(selectorName);
+    if ([obj respondsToSelector:sel]) {
+        IMP imp = [obj methodForSelector:sel];
+        id (*func)(id, SEL) = (id (*)(id, SEL))imp;
+        return func(obj, sel);
+    }
+    return nil;
+}
+
 static BOOL isControllerDisplayingVideo(UIViewController *controller) {
     if (!controller) return NO;
     
     id central = nil;
     @try {
-        id node = nil;
-        if ([controller respondsToSelector:NSSelectorFromString(@"galleryNode")]) {
-            node = [controller valueForKey:@"galleryNode"];
-        } else if ([controller respondsToSelector:NSSelectorFromString(@"controllerNode")]) {
-            node = [controller valueForKey:@"controllerNode"];
-        } else if ([controller respondsToSelector:NSSelectorFromString(@"displayNode")]) {
-            node = [controller valueForKey:@"displayNode"];
-        }
-        if (node && [node respondsToSelector:NSSelectorFromString(@"pager")]) {
-            id pager = [node valueForKey:@"pager"];
-            if (pager && [pager respondsToSelector:NSSelectorFromString(@"centralItemNode")]) {
-                central = [pager performSelector:NSSelectorFromString(@"centralItemNode")];
+        id node = safeInvokeGetter(controller, @"galleryNode") ?:
+                  safeInvokeGetter(controller, @"controllerNode") ?:
+                  safeInvokeGetter(controller, @"displayNode");
+        if (node) {
+            id pager = safeInvokeGetter(node, @"pager");
+            if (pager) {
+                central = safeInvokeGetter(pager, @"centralItemNode");
             }
         }
     } @catch (...) {}
@@ -428,10 +434,8 @@ static BOOL isControllerDisplayingVideo(UIViewController *controller) {
             return YES;
         }
         @try {
-            if ([central respondsToSelector:NSSelectorFromString(@"videoNode")]) {
-                id vn = [central valueForKey:@"videoNode"];
-                if (vn) return YES;
-            }
+            id vn = safeInvokeGetter(central, @"videoNode");
+            if (vn) return YES;
         } @catch (...) {}
         return NO;
     }
