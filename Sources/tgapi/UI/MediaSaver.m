@@ -68,6 +68,93 @@ static UIImage *downloadIconImage(void) {
     return icon;
 }
 
+static BOOL isVideoFile(NSString *path) {
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return NO;
+    NSString *ext = [path pathExtension].lowercaseString;
+    if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"] || [ext isEqualToString:@"m4v"]) {
+        return YES;
+    }
+    // Check magic bytes for MP4 (offset 4 is "ftyp")
+    @try {
+        NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
+        if (fh) {
+            NSData *header = [fh readDataOfLength:12];
+            [fh closeFile];
+            if (header.length >= 8) {
+                const char *bytes = (const char *)header.bytes;
+                if (memcmp(bytes + 4, "ftyp", 4) == 0) {
+                    return YES;
+                }
+            }
+        }
+    } @catch (...) {}
+    return NO;
+}
+
++ (NSString *)ensureVideoExtension:(NSString *)path {
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
+    NSString *ext = [path pathExtension].lowercaseString;
+    if ([ext isEqualToString:@"mp4"] || [ext isEqualToString:@"mov"] || [ext isEqualToString:@"m4v"]) {
+        return path;
+    }
+    // If file has no extension (e.g. TempBox file named "file"), copy with .mp4 extension
+    NSString *target = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"tg_saved_%ld.mp4", (long)(CFAbsoluteTimeGetCurrent() * 1000)]];
+    [[NSFileManager defaultManager] removeItemAtPath:target error:nil];
+    NSError *err = nil;
+    if ([[NSFileManager defaultManager] copyItemAtPath:path toPath:target error:&err]) {
+        return target;
+    }
+    return path;
+}
+
+static void scanLayersRecursively(CALayer *layer, void (^foundCallback)(NSString *path)) {
+    if (!layer) return;
+    @try {
+        if ([layer isKindOfClass:[AVPlayerLayer class]]) {
+            AVPlayer *player = [(AVPlayerLayer *)layer player];
+            AVPlayerItem *item = player.currentItem;
+            if ([item.asset isKindOfClass:[AVURLAsset class]]) {
+                NSURL *url = [(AVURLAsset *)item.asset URL];
+                if (url && url.isFileURL && [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
+                    foundCallback(url.path);
+                    return;
+                }
+            }
+        }
+        for (CALayer *sub in layer.sublayers) {
+            scanLayersRecursively(sub, foundCallback);
+        }
+    } @catch (...) {}
+}
+
+static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), void (^checkLayerContents)(CGImageRef cg)) {
+    if (!v) return;
+    @try {
+        // 1. Check CALayer contents
+        id contents = v.layer.contents;
+        if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
+            checkLayerContents((__bridge CGImageRef)contents);
+        }
+        
+        // 2. Check UIImageView
+        if ([v isKindOfClass:[UIImageView class]]) {
+            checkImage([(UIImageView *)v image]);
+        }
+        
+        // 3. Check AsyncDisplayKit node
+        @try {
+            id node = [v valueForKey:@"asyncdisplaykit_node"];
+            if (node && [node respondsToSelector:@selector(image)]) {
+                checkImage([node performSelector:@selector(image)]);
+            }
+        } @catch (...) {}
+        
+        for (UIView *sub in v.subviews) {
+            scanViewsRecursively(sub, checkImage, checkLayerContents);
+        }
+    } @catch (...) {}
+}
+
 + (void)attachToController:(UIViewController *)controller {
     if (!controller || !controller.isViewLoaded) return;
     
@@ -83,24 +170,30 @@ static UIImage *downloadIconImage(void) {
     // Avoid duplicate buttons
     if ([view viewWithTag:998811]) return;
     
-    MediaSaverButton *btn = [MediaSaverButton buttonWithType:UIButtonTypeSystem];
+    MediaSaverButton *btn = [MediaSaverButton buttonWithType:UIButtonTypeCustom];
     btn.tag = 998811;
     btn.targetController = controller;
-    btn.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.65];
+    
+    // Telegram-style sleek dark translucent gray appearance (NO border)
+    btn.backgroundColor = [UIColor colorWithRed:0.20 green:0.20 blue:0.22 alpha:0.75];
     btn.tintColor = [UIColor whiteColor];
-    btn.layer.cornerRadius = 21;
-    btn.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.25].CGColor;
-    btn.layer.borderWidth = 1.0;
+    btn.layer.cornerRadius = 21.0;
+    btn.layer.borderWidth = 0.0;
+    btn.layer.borderColor = nil;
     btn.layer.shadowColor = [UIColor blackColor].CGColor;
-    btn.layer.shadowOpacity = 0.4;
+    btn.layer.shadowOpacity = 0.35;
     btn.layer.shadowOffset = CGSizeMake(0, 2);
-    btn.layer.shadowRadius = 4.0;
+    btn.layer.shadowRadius = 5.0;
     btn.layer.zPosition = 9999;
     btn.clipsToBounds = NO;
     btn.translatesAutoresizingMaskIntoConstraints = NO;
     
     [btn setImage:downloadIconImage() forState:UIControlStateNormal];
-    [btn addTarget:self action:@selector(handleButtonTap:) forControlEvents:UIControlEventTouchUpInside];
+    [btn addTarget:[MediaSaver shared] action:@selector(handleButtonTap:) forControlEvents:UIControlEventTouchUpInside];
+    
+    // Start invisible and scaled down for smooth fade-in animation
+    btn.alpha = 0.0;
+    btn.transform = CGAffineTransformMakeScale(0.8, 0.8);
     
     [view addSubview:btn];
     
@@ -122,15 +215,38 @@ static UIImage *downloadIconImage(void) {
         ]];
     }
     
-    // Also add long-press gesture to the view for convenience
+    // Smooth fade-in animation over 250 milliseconds
+    [UIView animateWithDuration:0.25 delay:0.05 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        btn.alpha = 1.0;
+        btn.transform = CGAffineTransformIdentity;
+    } completion:nil];
+    
+    // Long-press gesture on view as alternative save trigger
     UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleLongPress:)];
     lp.minimumPressDuration = 0.5;
     [view addGestureRecognizer:lp];
 }
 
-+ (void)handleButtonTap:(MediaSaverButton *)sender {
-    if (sender.targetController) {
-        [self saveMediaFromController:sender.targetController];
+- (void)handleButtonTap:(MediaSaverButton *)sender {
+    // Subtle bounce feedback on press
+    [UIView animateWithDuration:0.1 animations:^{
+        sender.transform = CGAffineTransformMakeScale(0.9, 0.9);
+    } completion:^(BOOL finished) {
+        [UIView animateWithDuration:0.15 animations:^{
+            sender.transform = CGAffineTransformIdentity;
+        }];
+    }];
+    
+    UIViewController *vc = sender.targetController;
+    if (!vc) {
+        UIResponder *r = sender;
+        while (r && ![r isKindOfClass:[UIViewController class]]) {
+            r = r.nextResponder;
+        }
+        vc = (UIViewController *)r;
+    }
+    if (vc) {
+        [MediaSaver saveMediaFromController:vc];
     }
 }
 
@@ -144,8 +260,10 @@ static UIImage *downloadIconImage(void) {
     UIViewController *vc = (UIViewController *)r;
     if (!vc) return;
     
-    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
-    [feedback impactOccurred];
+    @try {
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
+        [feedback impactOccurred];
+    } @catch (...) {}
     
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Media Options" message:nil preferredStyle:UIAlertControllerStyleActionSheet];
     [sheet addAction:[UIAlertAction actionWithTitle:@"Save to Camera Roll" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
@@ -156,117 +274,114 @@ static UIImage *downloadIconImage(void) {
     [vc presentViewController:sheet animated:YES completion:nil];
 }
 
-static void scanLayersRecursively(CALayer *layer, void (^foundCallback)(NSString *path)) {
-    if (!layer) return;
-    if ([layer isKindOfClass:[AVPlayerLayer class]]) {
-        AVPlayer *player = [(AVPlayerLayer *)layer player];
-        AVPlayerItem *item = player.currentItem;
-        if ([item.asset isKindOfClass:[AVURLAsset class]]) {
-            NSURL *url = [(AVURLAsset *)item.asset URL];
-            if (url && url.isFileURL && [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
-                foundCallback(url.path);
-                return;
+- (void)handleInstantVideoDoubleTap:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    
+    UIView *view = gesture.view;
+    if (!view) return;
+    
+    @try {
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleHeavy];
+        [feedback impactOccurred];
+    } @catch (...) {}
+    
+    // 1. First search view hierarchy for AVPlayerLayer
+    __block NSString *foundPath = nil;
+    if (view.layer) {
+        @try {
+            scanLayersRecursively(view.layer, ^(NSString *path) {
+                if (isVideoFile(path)) {
+                    foundPath = path;
+                }
+            });
+        } @catch (...) {}
+    }
+    
+    // 2. If not currently playing, scan newest video in temp directory
+    if (!foundPath) {
+        foundPath = [MediaSaver findNewestVideoInDirectory:NSTemporaryDirectory()];
+        if (!foundPath) {
+            foundPath = [MediaSaver findNewestVideoInDirectory:[NSHomeDirectory() stringByAppendingPathComponent:@"tmp"]];
+        }
+    }
+    
+    if (foundPath && [[NSFileManager defaultManager] fileExistsAtPath:foundPath]) {
+        NSString *cleanPath = [MediaSaver ensureVideoExtension:foundPath];
+        if (cleanPath && UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(cleanPath)) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                UISaveVideoAtPathToSavedPhotosAlbum(cleanPath, [MediaSaver shared], @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+            });
+            return;
+        }
+    }
+    
+    [MediaSaver showToast:@"Play round video first to cache it" success:NO];
+}
+
++ (NSString *)findNewestVideoInDirectory:(NSString *)dir {
+    if (!dir || ![[NSFileManager defaultManager] fileExistsAtPath:dir]) return nil;
+    
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:dir];
+    NSString *file;
+    NSDate *now = [NSDate date];
+    NSString *newestFile = nil;
+    NSDate *newestDate = [NSDate distantPast];
+    
+    int scanned = 0;
+    while ((file = [enumerator nextObject])) {
+        scanned++;
+        if (scanned > 400) break;
+        
+        NSString *fullPath = [dir stringByAppendingPathComponent:file];
+        NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
+        if (!attrs || [attrs[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
+        
+        NSDate *mod = attrs[NSFileModificationDate];
+        if (!mod || [now timeIntervalSinceDate:mod] > 300.0) continue; // within 5 minutes
+        
+        if (isVideoFile(fullPath)) {
+            if ([mod compare:newestDate] == NSOrderedDescending) {
+                newestDate = mod;
+                newestFile = fullPath;
             }
         }
     }
-    for (CALayer *sub in layer.sublayers) {
-        scanLayersRecursively(sub, foundCallback);
-    }
-}
-
-static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), void (^checkLayerContents)(CGImageRef cg)) {
-    if (!v) return;
-    
-    // 1. Check CALayer contents
-    id contents = v.layer.contents;
-    if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
-        checkLayerContents((__bridge CGImageRef)contents);
-    }
-    
-    // 2. Check UIImageView
-    if ([v isKindOfClass:[UIImageView class]]) {
-        checkImage([(UIImageView *)v image]);
-    }
-    
-    // 3. Check AsyncDisplayKit node
-    @try {
-        id node = [v valueForKey:@"asyncdisplaykit_node"];
-        if (node && [node respondsToSelector:@selector(image)]) {
-            checkImage([node performSelector:@selector(image)]);
-        }
-    } @catch (...) {}
-    
-    for (UIView *sub in v.subviews) {
-        scanViewsRecursively(sub, checkImage, checkLayerContents);
-    }
+    return newestFile;
 }
 
 + (NSString *)findVideoPathInController:(UIViewController *)controller {
     if (!controller) return nil;
     
-    // 1. Inspect controller's ivars for TempBoxFile or path
-    unsigned int count = 0;
-    Ivar *ivars = class_copyIvarList([controller class], &count);
-    if (ivars) {
-        for (unsigned int i = 0; i < count; i++) {
-            const char *name = ivar_getName(ivars[i]);
-            if (!name) continue;
-            id val = object_getIvar(controller, ivars[i]);
-            if (!val) continue;
-            
-            if ([val isKindOfClass:[NSString class]]) {
-                NSString *str = (NSString *)val;
-                if ([str hasSuffix:@".mp4"] || [str hasSuffix:@".mov"]) {
-                    if ([[NSFileManager defaultManager] fileExistsAtPath:str]) {
-                        free(ivars);
-                        return str;
-                    }
-                }
-            }
-            @try {
-                id pathObj = [val valueForKey:@"path"];
-                if ([pathObj isKindOfClass:[NSString class]]) {
-                    NSString *p = (NSString *)pathObj;
-                    if ([[NSFileManager defaultManager] fileExistsAtPath:p]) {
-                        free(ivars);
-                        return p;
-                    }
-                }
-            } @catch (...) {}
-        }
-        free(ivars);
-    }
-    
-    // 2. Scan view layers for AVPlayerLayer
+    // 1. Scan view layers for AVPlayerLayer
     __block NSString *foundPath = nil;
     if (controller.isViewLoaded && controller.view.layer) {
-        scanLayersRecursively(controller.view.layer, ^(NSString *path) {
-            foundPath = path;
-        });
-    }
-    if (foundPath) return foundPath;
-    
-    // 3. Scan temp directory for newly created/modified video file in last 3 minutes
-    NSString *tmpDir = NSTemporaryDirectory();
-    NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:tmpDir error:nil];
-    NSDate *now = [NSDate date];
-    NSString *newestFile = nil;
-    NSDate *newestDate = [NSDate distantPast];
-    
-    for (NSString *file in files) {
-        if ([file hasSuffix:@".mp4"] || [file hasSuffix:@".mov"]) {
-            NSString *fullPath = [tmpDir stringByAppendingPathComponent:file];
-            NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:fullPath error:nil];
-            NSDate *mod = attrs[NSFileModificationDate];
-            if (mod && [now timeIntervalSinceDate:mod] < 180.0) {
-                if ([mod compare:newestDate] == NSOrderedDescending) {
-                    newestDate = mod;
-                    newestFile = fullPath;
+        @try {
+            scanLayersRecursively(controller.view.layer, ^(NSString *path) {
+                if (isVideoFile(path)) {
+                    foundPath = path;
                 }
-            }
-        }
+            });
+        } @catch (...) {}
     }
-    return newestFile;
+    if (foundPath) return [self ensureVideoExtension:foundPath];
+    
+    // 2. Scan temp directories for video files modified in the last 5 minutes
+    NSString *tmpDir = NSTemporaryDirectory();
+    NSString *bestTemp = [self findNewestVideoInDirectory:tmpDir];
+    if (bestTemp) return [self ensureVideoExtension:bestTemp];
+    
+    NSString *homeTmp = [NSHomeDirectory() stringByAppendingPathComponent:@"tmp"];
+    if (![homeTmp isEqualToString:tmpDir]) {
+        NSString *homeBest = [self findNewestVideoInDirectory:homeTmp];
+        if (homeBest) return [self ensureVideoExtension:homeBest];
+    }
+    
+    NSString *caches = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches"];
+    NSString *cachesBest = [self findNewestVideoInDirectory:caches];
+    if (cachesBest) return [self ensureVideoExtension:cachesBest];
+    
+    return nil;
 }
 
 + (UIImage *)findImageInView:(UIView *)view {
@@ -301,26 +416,33 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
 + (UIImage *)snapshotView:(UIView *)view {
     if (!view) return nil;
     CGSize size = view.bounds.size;
-    if (size.width <= 0 || size.height <= 0) return nil;
+    if (size.width <= 10 || size.height <= 10) return nil;
     
-    UIGraphicsBeginImageContextWithOptions(size, NO, [UIScreen mainScreen].scale);
-    [view drawViewHierarchyInRect:view.bounds afterScreenUpdates:NO];
-    UIImage *snap = UIGraphicsGetImageFromCurrentImageContext();
-    UIGraphicsEndImageContext();
+    UIImage *snap = nil;
+    @try {
+        UIGraphicsBeginImageContextWithOptions(size, NO, [UIScreen mainScreen].scale);
+        [view drawViewHierarchyInRect:view.bounds afterScreenUpdates:NO];
+        snap = UIGraphicsGetImageFromCurrentImageContext();
+        UIGraphicsEndImageContext();
+    } @catch (...) {}
     return snap;
 }
 
 + (void)saveMediaFromController:(UIViewController *)controller {
     if (!controller) return;
     
-    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
-    [feedback impactOccurred];
+    @try {
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        [feedback impactOccurred];
+    } @catch (...) {}
     
     // Check if video is playing or present
     NSString *videoPath = [self findVideoPathInController:controller];
     if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
         if (UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(videoPath)) {
-            UISaveVideoAtPathToSavedPhotosAlbum(videoPath, [MediaSaver shared], @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                UISaveVideoAtPathToSavedPhotosAlbum(videoPath, [MediaSaver shared], @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+            });
             return;
         }
     }
@@ -328,14 +450,18 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     // Check for image
     UIImage *image = [self findImageInView:controller.view];
     if (image) {
-        UIImageWriteToSavedPhotosAlbum(image, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIImageWriteToSavedPhotosAlbum(image, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
+        });
         return;
     }
     
     // Fallback: snapshot the view
     UIImage *snapshot = [self snapshotView:controller.view];
     if (snapshot) {
-        UIImageWriteToSavedPhotosAlbum(snapshot, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIImageWriteToSavedPhotosAlbum(snapshot, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
+        });
         return;
     }
     
@@ -363,16 +489,13 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
         UIWindow *window = UIApplication.sharedApplication.keyWindow;
         if (!window) return;
         
-        // Remove existing toast if any
         UIView *existing = [window viewWithTag:998899];
         if (existing) [existing removeFromSuperview];
         
         UIView *toast = [[UIView alloc] init];
         toast.tag = 998899;
-        toast.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.92];
+        toast.backgroundColor = [UIColor colorWithRed:0.18 green:0.18 blue:0.20 alpha:0.92];
         toast.layer.cornerRadius = 18;
-        toast.layer.borderColor = [[UIColor whiteColor] colorWithAlphaComponent:0.2].CGColor;
-        toast.layer.borderWidth = 1.0;
         toast.clipsToBounds = YES;
         toast.layer.zPosition = 99999;
         toast.translatesAutoresizingMaskIntoConstraints = NO;

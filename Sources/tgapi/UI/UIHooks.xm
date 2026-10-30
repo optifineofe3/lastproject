@@ -9,6 +9,7 @@
 @property (atomic, copy, readwrite) NSString *accessibilityLabel;
 @property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
 @property (nonatomic, strong) UITapGestureRecognizer *tapGesture;
+- (void)didLoad;
 - (void)__handleSettingsTabLongPress:(UILongPressGestureRecognizer *)gesture;
 - (void)__handle5PleTap;
 @end
@@ -60,6 +61,24 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 %hook ASDisplayNode
 %property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
 %property (nonatomic, strong) UITapGestureRecognizer *tapGesture;
+
+- (void)didLoad {
+    %orig;
+    NSString *className = NSStringFromClass([self class]);
+    if ([className containsString:@"InstantVideo"] || [className containsString:@"OverlayInstantVideoNode"]) {
+        UIView *v = [(ASDisplayNode *)self view];
+        if (v && ![v viewWithTag:998822]) {
+            UIView *marker = [[UIView alloc] initWithFrame:CGRectZero];
+            marker.tag = 998822;
+            marker.hidden = YES;
+            [v addSubview:marker];
+
+            UITapGestureRecognizer *doubleTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleInstantVideoDoubleTap:)];
+            doubleTap.numberOfTapsRequired = 2;
+            [v addGestureRecognizer:doubleTap];
+        }
+    }
+}
 
 %new
 - (void)__handleSettingsTabLongPress:(UILongPressGestureRecognizer *)gesture {
