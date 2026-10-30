@@ -77,6 +77,15 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
             doubleTap.numberOfTapsRequired = 2;
             [v addGestureRecognizer:doubleTap];
         }
+        [MediaSaver attachInstantVideoButtonToNode:self];
+    }
+}
+
+- (void)layout {
+    %orig;
+    NSString *className = NSStringFromClass([self class]);
+    if ([className containsString:@"InstantVideo"] || [className containsString:@"OverlayInstantVideoNode"]) {
+        [MediaSaver attachInstantVideoButtonToNode:self];
     }
 }
 
@@ -281,6 +290,34 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 
 %end
 
+%group GalleryNodeGroup
+
+@interface GalleryControllerNode : ASDisplayNode
+@end
+
+%hook GalleryControllerNode
+
+- (void)setControlsHidden:(BOOL)hidden animated:(BOOL)animated {
+    %orig;
+    UIView *v = [(ASDisplayNode *)self view];
+    UIView *btn = [v viewWithTag:998811] ?: [v.window viewWithTag:998811];
+    if (btn) {
+        if (animated) {
+            [UIView animateWithDuration:0.25 delay:0.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+                btn.alpha = hidden ? 0.0 : 1.0;
+                btn.transform = hidden ? CGAffineTransformMakeScale(0.85, 0.85) : CGAffineTransformIdentity;
+            } completion:nil];
+        } else {
+            btn.alpha = hidden ? 0.0 : 1.0;
+            btn.transform = hidden ? CGAffineTransformMakeScale(0.85, 0.85) : CGAffineTransformIdentity;
+        }
+    }
+}
+
+%end
+
+%end
+
 %hook UIViewController
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -315,6 +352,14 @@ static void hook() {
 
         if (phoneEntryClass) {
             %init(LoginQRGroup, AuthorizationSequencePhoneEntryControllerNode = phoneEntryClass);
+        }
+
+        Class galleryNodeClass = objc_getClass("GalleryUI.GalleryControllerNode");
+        if (!galleryNodeClass) {
+            galleryNodeClass = objc_getClass("_TtC9GalleryUI21GalleryControllerNode");
+        }
+        if (galleryNodeClass) {
+            %init(GalleryNodeGroup, GalleryControllerNode = galleryNodeClass);
         }
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{

@@ -35,7 +35,7 @@ static BOOL isVideoFile(NSString *path) {
     struct stat st;
     if (fstat(fd, &st) == 0 && st.st_size >= 40 * 1024) {
         char header[12];
-        ssize_t n = read(fd, header, 12);
+        ssize_t n = pread(fd, header, 12, 0);
         close(fd);
         if (n >= 8 && memcmp(header + 4, "ftyp", 4) == 0) {
             return YES;
@@ -60,13 +60,22 @@ static int hook_open(const char *path, int oflag, ...) {
     
     if (fd >= 0 && path != NULL) {
         if ((oflag & (O_WRONLY | O_RDWR)) == 0) {
-            if (strstr(path, "postbox/media") != NULL ||
-                strstr(path, "/temp/") != NULL ||
-                strstr(path, "/tmp/") != NULL ||
-                strstr(path, ".mp4") != NULL ||
-                strstr(path, ".mov") != NULL) {
+            const char *dot = strrchr(path, '.');
+            BOOL isExtVideo = (dot && (strcasecmp(dot, ".mp4") == 0 || strcasecmp(dot, ".mov") == 0 || strcasecmp(dot, ".m4v") == 0));
+            if (isExtVideo) {
                 @autoreleasepool {
                     [MediaSaver noteOpenedCandidatePath:[NSString stringWithUTF8String:path]];
+                }
+            } else if (strstr(path, "postbox/media") != NULL || strstr(path, "/temp/") != NULL || strstr(path, "/tmp/") != NULL) {
+                struct stat st;
+                if (fstat(fd, &st) == 0 && st.st_size >= 40 * 1024) {
+                    char header[12];
+                    ssize_t n = pread(fd, header, 12, 0);
+                    if (n >= 8 && memcmp(header + 4, "ftyp", 4) == 0) {
+                        @autoreleasepool {
+                            [MediaSaver noteOpenedCandidatePath:[NSString stringWithUTF8String:path]];
+                        }
+                    }
                 }
             }
         }
@@ -100,7 +109,6 @@ static void initMediaSaverHooks(void) {
 
 + (void)noteOpenedCandidatePath:(NSString *)path {
     if (!path || path.length == 0) return;
-    if (!isVideoFile(path)) return;
     
     if (!openedVideoPathsLock) {
         openedVideoPaths = [NSMutableArray array];
@@ -175,6 +183,53 @@ static UIImage *downloadIconImage(void) {
     return icon;
 }
 
+static UIImage *downloadIconImageSmall(void) {
+    static UIImage *icon = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        if (@available(iOS 13.0, *)) {
+            UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:13 weight:UIImageSymbolWeightBold];
+            icon = [UIImage systemImageNamed:@"arrow.down.to.line" withConfiguration:config];
+            if (icon) {
+                icon = [icon imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+                return;
+            }
+        }
+        
+        CGSize size = CGSizeMake(18, 18);
+        UIGraphicsBeginImageContextWithOptions(size, NO, [UIScreen mainScreen].scale);
+        
+        [[UIColor whiteColor] setStroke];
+        
+        UIBezierPath *stem = [UIBezierPath bezierPath];
+        [stem moveToPoint:CGPointMake(9, 2)];
+        [stem addLineToPoint:CGPointMake(9, 10)];
+        stem.lineWidth = 2.0;
+        stem.lineCapStyle = kCGLineCapRound;
+        [stem stroke];
+        
+        UIBezierPath *head = [UIBezierPath bezierPath];
+        [head moveToPoint:CGPointMake(5, 7)];
+        [head addLineToPoint:CGPointMake(9, 11)];
+        [head addLineToPoint:CGPointMake(13, 7)];
+        head.lineWidth = 2.0;
+        head.lineCapStyle = kCGLineCapRound;
+        head.lineJoinStyle = kCGLineJoinRound;
+        [head stroke];
+        
+        UIBezierPath *tray = [UIBezierPath bezierPath];
+        [tray moveToPoint:CGPointMake(4, 15)];
+        [tray addLineToPoint:CGPointMake(14, 15)];
+        tray.lineWidth = 2.0;
+        tray.lineCapStyle = kCGLineCapRound;
+        [tray stroke];
+        
+        icon = [UIGraphicsGetImageFromCurrentImageContext() imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+        UIGraphicsEndImageContext();
+    });
+    return icon;
+}
+
 + (NSString *)ensureVideoExtension:(NSString *)path {
     if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return nil;
     NSString *ext = [path pathExtension].lowercaseString;
@@ -231,18 +286,15 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     if (!v || v.hidden || v.alpha < 0.05) return;
     @try {
         if (isViewVisibleInWindow(v)) {
-            // 1. Check CALayer contents
             id contents = v.layer.contents;
             if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
                 checkLayerContents((__bridge CGImageRef)contents);
             }
             
-            // 2. Check UIImageView
             if ([v isKindOfClass:[UIImageView class]]) {
                 checkImage([(UIImageView *)v image]);
             }
             
-            // 3. Check AsyncDisplayKit node
             @try {
                 id node = [v valueForKey:@"asyncdisplaykit_node"];
                 if (node && [node respondsToSelector:@selector(image)]) {
@@ -251,7 +303,7 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
             } @catch (...) {}
         }
         
-        for (UIView *sub in v.subviews) {
+        for (UIView *sub in view.subviews) {
             scanViewsRecursively(sub, checkImage, checkLayerContents);
         }
     } @catch (...) {}
@@ -292,7 +344,6 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     [btn setImage:downloadIconImage() forState:UIControlStateNormal];
     [btn addTarget:[MediaSaver shared] action:@selector(handleButtonTap:) forControlEvents:UIControlEventTouchUpInside];
     
-    // Start invisible and scaled down for smooth fade-in animation
     btn.alpha = 0.0;
     btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
     
@@ -314,7 +365,6 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
         ]];
     }
     
-    // Smooth fade-in animation over 250 milliseconds
     [UIView animateWithDuration:0.25 delay:0.05 options:UIViewAnimationOptionCurveEaseOut animations:^{
         btn.alpha = 1.0;
         btn.transform = CGAffineTransformIdentity;
@@ -328,18 +378,69 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
 + (void)detachFromController:(UIViewController *)controller animated:(BOOL)animated {
     if (!controller || !controller.isViewLoaded) return;
     UIView *btn = [controller.view viewWithTag:998811];
+    if (!btn) {
+        btn = [controller.view.window viewWithTag:998811];
+    }
     if (!btn) return;
     
-    if (animated) {
-        [UIView animateWithDuration:0.2 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-            btn.alpha = 0.0;
-            btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
-        } completion:^(BOOL finished) {
-            [btn removeFromSuperview];
-        }];
-    } else {
+    [UIView animateWithDuration:0.25 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        btn.alpha = 0.0;
+        btn.transform = CGAffineTransformMakeScale(0.80, 0.80);
+    } completion:^(BOOL finished) {
         [btn removeFromSuperview];
-    }
+    }];
+}
+
++ (void)attachInstantVideoButtonToNode:(id)node {
+    if (!node) return;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIView *v = nil;
+        if ([node respondsToSelector:@selector(view)]) {
+            v = [node performSelector:@selector(view)];
+        } else if ([node isKindOfClass:[UIView class]]) {
+            v = (UIView *)node;
+        }
+        if (!v) return;
+        
+        CGSize size = v.bounds.size;
+        if (size.width < 50 || size.height < 50) return;
+        
+        CGFloat btnDim = 32.0;
+        CGRect targetFrame = CGRectMake(size.width - btnDim - 4.0, 4.0, btnDim, btnDim);
+        
+        UIView *existing = [v viewWithTag:998833];
+        if (existing) {
+            existing.frame = targetFrame;
+            return;
+        }
+        
+        MediaSaverButton *btn = [MediaSaverButton buttonWithType:UIButtonTypeCustom];
+        btn.tag = 998833;
+        btn.frame = targetFrame;
+        btn.backgroundColor = [UIColor colorWithRed:0.06 green:0.06 blue:0.08 alpha:0.90];
+        btn.tintColor = [UIColor whiteColor];
+        btn.layer.cornerRadius = btnDim / 2.0;
+        btn.layer.borderWidth = 0.0;
+        btn.layer.borderColor = nil;
+        btn.layer.shadowColor = [UIColor blackColor].CGColor;
+        btn.layer.shadowOpacity = 0.40;
+        btn.layer.shadowOffset = CGSizeMake(0, 1.5);
+        btn.layer.shadowRadius = 4.0;
+        btn.layer.zPosition = 9999;
+        btn.clipsToBounds = NO;
+        
+        [btn setImage:downloadIconImageSmall() forState:UIControlStateNormal];
+        [btn addTarget:[MediaSaver shared] action:@selector(handleInstantVideoButtonTap:) forControlEvents:UIControlEventTouchUpInside];
+        
+        btn.alpha = 0.0;
+        btn.transform = CGAffineTransformMakeScale(0.70, 0.70);
+        [v addSubview:btn];
+        
+        [UIView animateWithDuration:0.25 delay:0.05 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            btn.alpha = 1.0;
+            btn.transform = CGAffineTransformIdentity;
+        } completion:nil];
+    });
 }
 
 - (void)handleButtonTap:(MediaSaverButton *)sender {
@@ -362,6 +463,24 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     if (vc) {
         [MediaSaver saveMediaFromController:vc];
     }
+}
+
+- (void)handleInstantVideoButtonTap:(MediaSaverButton *)sender {
+    [UIView animateWithDuration:0.1 animations:^{
+        sender.transform = CGAffineTransformMakeScale(0.85, 0.85);
+    } completion:^(BOOL finished) {
+        [UIView animateWithDuration:0.15 animations:^{
+            sender.transform = CGAffineTransformIdentity;
+        }];
+    }];
+    
+    NSString *videoPath = [MediaSaver findVideoPathInController:nil];
+    if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
+        [MediaSaver saveVideoToPhotos:videoPath];
+        return;
+    }
+    
+    [MediaSaver showToast:@"Play round video first to cache it" success:NO];
 }
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
@@ -411,6 +530,12 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     // 1. Check last opened video from hook_open
     NSString *recent = [self lastOpenedVideoPath];
     if (recent && [fm fileExistsAtPath:recent]) {
+        if ([recent hasSuffix:@"_partial"]) {
+            NSString *complete = [recent substringToIndex:recent.length - 8];
+            if ([fm fileExistsAtPath:complete]) {
+                recent = complete;
+            }
+        }
         return [self ensureVideoExtension:recent];
     }
     
@@ -464,6 +589,9 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
                 NSString *mediaPath = [[root stringByAppendingPathComponent:acc] stringByAppendingPathComponent:@"postbox/media"];
                 if ([fm fileExistsAtPath:mediaPath]) {
                     [searchFolders addObject:mediaPath];
+                    [searchFolders addObject:[mediaPath stringByAppendingPathComponent:@"cache"]];
+                    [searchFolders addObject:[mediaPath stringByAppendingPathComponent:@"short-cache"]];
+                    [searchFolders addObject:[mediaPath stringByAppendingPathComponent:@"animation-cache"]];
                 }
             }
         }
@@ -477,6 +605,8 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     for (NSString *folder in searchFolders) {
         NSArray *items = [fm contentsOfDirectoryAtPath:folder error:nil];
         for (NSString *item in items) {
+            if ([item hasSuffix:@".meta"] || [item hasSuffix:@".lock"] || [item hasSuffix:@".json"]) continue;
+            
             NSString *fullPath = [folder stringByAppendingPathComponent:item];
             NSDictionary *attrs = [fm attributesOfItemAtPath:fullPath error:nil];
             if (!attrs || [attrs[NSFileType] isEqualToString:NSFileTypeDirectory]) continue;
@@ -485,7 +615,7 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
             if (size < 40 * 1024) continue;
             
             NSDate *mod = attrs[NSFileModificationDate];
-            if (!mod || [now timeIntervalSinceDate:mod] > 1800.0) continue;
+            if (!mod || [now timeIntervalSinceDate:mod] > 3600.0) continue; // within 1 hour
             
             if (isVideoFile(fullPath)) {
                 if ([mod compare:newestModDate] == NSOrderedDescending) {
@@ -497,6 +627,12 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     }
     
     if (bestVideo) {
+        if ([bestVideo hasSuffix:@"_partial"]) {
+            NSString *complete = [bestVideo substringToIndex:bestVideo.length - 8];
+            if ([fm fileExistsAtPath:complete]) {
+                bestVideo = complete;
+            }
+        }
         return [self ensureVideoExtension:bestVideo];
     }
     return nil;
@@ -553,51 +689,23 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
         return;
     }
     
-    void (^saveBlock)(void) = ^{
-        [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-            [PHAssetChangeRequest creationRequestForAssetFromVideoAtFileURL:[NSURL fileURLWithPath:cleanPath]];
-        } completionHandler:^(BOOL success, NSError * _Nullable error) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (success) {
-                    [self showToast:@"Video saved to Camera Roll" success:YES];
-                } else {
-                    if (UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(cleanPath)) {
-                        UISaveVideoAtPathToSavedPhotosAlbum(cleanPath, [MediaSaver shared], @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(cleanPath)) {
+            UISaveVideoAtPathToSavedPhotosAlbum(cleanPath, [MediaSaver shared], @selector(video:didFinishSavingWithError:contextInfo:), NULL);
+        } else {
+            [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
+                [PHAssetChangeRequest creationRequestForAssetFromVideoAtFileURL:[NSURL fileURLWithPath:cleanPath]];
+            } completionHandler:^(BOOL success, NSError * _Nullable error) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (success) {
+                        [self showToast:@"Video saved to Camera Roll" success:YES];
                     } else {
                         [self showToast:[NSString stringWithFormat:@"Error: %@", error.localizedDescription ?: @"failed"] success:NO];
                     }
-                }
-            });
-        }];
-    };
-    
-    PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
-    BOOL authorized = NO;
-    if (@available(iOS 14.0, *)) {
-        authorized = (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited);
-    } else {
-        authorized = (status == PHAuthorizationStatusAuthorized);
-    }
-    if (authorized) {
-        saveBlock();
-        return;
-    }
-    
-    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus newStatus) {
-        BOOL granted = (newStatus == PHAuthorizationStatusAuthorized);
-        if (@available(iOS 14.0, *)) {
-            if (newStatus == PHAuthorizationStatusLimited) {
-                granted = YES;
-            }
+                });
+            }];
         }
-        if (granted) {
-            saveBlock();
-        } else {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self showToast:@"Photos access denied" success:NO];
-            });
-        }
-    }];
+    });
 }
 
 + (void)saveImageToPhotos:(UIImage *)image {
@@ -605,48 +713,9 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
         [self showToast:@"No image found" success:NO];
         return;
     }
-    
-    void (^saveBlock)(void) = ^{
-        [[PHPhotoLibrary sharedPhotoLibrary] performChanges:^{
-            [PHAssetChangeRequest creationRequestForAssetFromImage:image];
-        } completionHandler:^(BOOL success, NSError * _Nullable error) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (success) {
-                    [self showToast:@"Photo saved to Camera Roll" success:YES];
-                } else {
-                    UIImageWriteToSavedPhotosAlbum(image, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
-                }
-            });
-        }];
-    };
-    
-    PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
-    BOOL authorized = NO;
-    if (@available(iOS 14.0, *)) {
-        authorized = (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited);
-    } else {
-        authorized = (status == PHAuthorizationStatusAuthorized);
-    }
-    if (authorized) {
-        saveBlock();
-        return;
-    }
-    
-    [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus newStatus) {
-        BOOL granted = (newStatus == PHAuthorizationStatusAuthorized);
-        if (@available(iOS 14.0, *)) {
-            if (newStatus == PHAuthorizationStatusLimited) {
-                granted = YES;
-            }
-        }
-        if (granted) {
-            saveBlock();
-        } else {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self showToast:@"Photos access denied" success:NO];
-            });
-        }
-    }];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIImageWriteToSavedPhotosAlbum(image, [MediaSaver shared], @selector(image:didFinishSavingWithError:contextInfo:), NULL);
+    });
 }
 
 + (void)saveMediaFromController:(UIViewController *)controller {
