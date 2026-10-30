@@ -27,14 +27,18 @@ class TLParser: NSObject {
                 if saved.count > 1000 { saved.removeFirst(saved.count - 1000) }
                 UserDefaults.standard.set(saved, forKey: udKey)
             }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: NSNotification.Name("LeadMessageDeletedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
+            }
         }
     }
 
     private static var deletedIds: Set<Int32> {
         deletedQueue.sync {
             if !_loaded {
-                // First access: load persisted IDs from UserDefaults
-                // (can't call deletedQueue.async inside sync, use flag trick)
+                _loaded = true
+                let saved = (UserDefaults.standard.array(forKey: udKey) as? [Int32]) ?? []
+                _deletedIds.formUnion(saved)
             }
             return _deletedIds
         }
@@ -47,6 +51,12 @@ class TLParser: NSObject {
             _loaded = true
             let saved = (UserDefaults.standard.array(forKey: udKey) as? [Int32]) ?? []
             _deletedIds.formUnion(saved)
+        }
+        selfDestructQueue.async(flags: .barrier) {
+            guard !_selfDestructLoaded else { return }
+            _selfDestructLoaded = true
+            let saved = (UserDefaults.standard.array(forKey: selfDestructUdKey) as? [Int32]) ?? []
+            _selfDestructingMessageIds.formUnion(saved)
         }
     }
 
@@ -350,7 +360,39 @@ class TLParser: NSObject {
         return (result, changed)
     }
     // IDs of messages that originally had a self-destruct timer (one-time media ttlSeconds)
-    private static var selfDestructingMessageIds = Set<Int32>()
+    private static let selfDestructUdKey = "LeadSelfDestructingIds"
+    private static var _selfDestructingMessageIds = Set<Int32>()
+    private static var _selfDestructLoaded = false
+    private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+
+    private static var selfDestructingMessageIds: Set<Int32> {
+        return selfDestructQueue.sync {
+            if !_selfDestructLoaded {
+                _selfDestructLoaded = true
+                let saved = (UserDefaults.standard.array(forKey: selfDestructUdKey) as? [Int32]) ?? []
+                _selfDestructingMessageIds.formUnion(saved)
+            }
+            return _selfDestructingMessageIds
+        }
+    }
+
+    private static func addSelfDestructingId(_ id: Int32) {
+        guard id != 0 else { return }
+        selfDestructQueue.async(flags: .barrier) {
+            if !_selfDestructLoaded {
+                _selfDestructLoaded = true
+                let saved = (UserDefaults.standard.array(forKey: selfDestructUdKey) as? [Int32]) ?? []
+                _selfDestructingMessageIds.formUnion(saved)
+            }
+            _selfDestructingMessageIds.insert(id)
+            var saved = (UserDefaults.standard.array(forKey: selfDestructUdKey) as? [Int32]) ?? []
+            if !saved.contains(id) {
+                saved.append(id)
+                if saved.count > 1000 { saved.removeFirst(saved.count - 1000) }
+                UserDefaults.standard.set(saved, forKey: selfDestructUdKey)
+            }
+        }
+    }
 
     @objc static func isMessageSelfDestructing(_ msgId: NSNumber) -> Bool {
         return selfDestructingMessageIds.contains(msgId.int32Value)
@@ -363,18 +405,39 @@ class TLParser: NSObject {
         return autoDeleteMessageIds.contains(msgId.int32Value)
     }
 
+    private static var isNoForwardsBypassActive: Bool {
+        if UserDefaults.standard.object(forKey: "disableForwardRestriction") == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: "disableForwardRestriction")
+    }
+
+    private static var isAntiSelfDestructActive: Bool {
+        if UserDefaults.standard.object(forKey: "LeadAntiSelfDestruct") == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct")
+    }
+
+    private static var isAntiRevokeActive: Bool {
+        if UserDefaults.standard.object(forKey: "LeadAntiRevoke") == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: "LeadAntiRevoke")
+    }
+
     private static func stripTTLMedia(_ media: Api.MessageMedia, messageId: Int32) -> Api.MessageMedia {
-        guard UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") else { return media }
+        guard isAntiSelfDestructActive else { return media }
         switch media {
         case let .messageMediaPhoto(data):
             if data.ttlSeconds != nil || (Int(data.flags) & Int(1 << 2)) != 0 {
-                selfDestructingMessageIds.insert(messageId)
+                addSelfDestructingId(messageId)
             }
             // Clear ttlSeconds (bit 2) and spoiler (bit 3) and media_unread (bit 5) just in case
             return .messageMediaPhoto(Api.MessageMedia.Cons_messageMediaPhoto(flags: data.flags & ~(1 << 2) & ~(1 << 3) & ~(1 << 5), photo: data.photo, ttlSeconds: nil, video: data.video))
         case let .messageMediaDocument(data):
             if data.ttlSeconds != nil || (Int(data.flags) & Int(1 << 2)) != 0 {
-                selfDestructingMessageIds.insert(messageId)
+                addSelfDestructingId(messageId)
             }
             // Clear ttlSeconds (bit 2) and spoiler (bit 3) and video stuff
             return .messageMediaDocument(Api.MessageMedia.Cons_messageMediaDocument(flags: data.flags & ~(1 << 2) & ~(1 << 3), document: data.document, altDocuments: data.altDocuments, videoCover: data.videoCover, videoTimestamp: data.videoTimestamp, ttlSeconds: nil))
@@ -383,16 +446,9 @@ class TLParser: NSObject {
         }
     }
 
-    private static var isNoForwardsBypassActive: Bool {
-        if UserDefaults.standard.object(forKey: "disableForwardRestriction") == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: "disableForwardRestriction")
-    }
-
     private static func stripNoForwards(_ chat: Api.Chat) -> (Api.Chat, Bool) {
         guard isNoForwardsBypassActive ||
-              UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") ||
+              isAntiSelfDestructActive ||
               UserDefaults.standard.bool(forKey: "LeadAntiAutoDelete") else { return (chat, false) }
               
         switch chat {
@@ -454,7 +510,7 @@ class TLParser: NSObject {
     
     private static func stripNoForwardsFromFullChat(_ chatFull: Api.ChatFull) -> (Api.ChatFull, Bool) {
         guard isNoForwardsBypassActive ||
-              UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") ||
+              isAntiSelfDestructActive ||
               UserDefaults.standard.bool(forKey: "LeadAntiAutoDelete") else { return (chatFull, false) }
               
         switch chatFull {
@@ -563,7 +619,7 @@ class TLParser: NSObject {
 
     private static func stripTTLMessage(_ apiMsg: Api.Message) -> (Api.Message, Bool) {
         guard isNoForwardsBypassActive || 
-              UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") else { return (apiMsg, false) }
+              isAntiSelfDestructActive else { return (apiMsg, false) }
         guard case let .message(data) = apiMsg else {
             return (apiMsg, false)
         }
@@ -571,7 +627,7 @@ class TLParser: NSObject {
         var isDestructing = false
         if data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0 {
             isDestructing = true
-            selfDestructingMessageIds.insert(data.id)
+            addSelfDestructingId(data.id)
         }
 
         let newMedia = data.media.map { stripTTLMedia($0, messageId: data.id) }
@@ -586,7 +642,7 @@ class TLParser: NSObject {
         
         // Strip noforwards if requested
         if isNoForwardsBypassActive || 
-           UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") {
+           isAntiSelfDestructActive {
             // Bit 14 is standard, bit 26 is used in neutralizePayload
             let mask: Int32 = ~( (1 << 14) | (1 << 26) )
             newFlags &= mask
@@ -649,16 +705,61 @@ class TLParser: NSObject {
                 return (update, false)
             }
             return (.updateNewChannelMessage(Api.Update.Cons_updateNewChannelMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
+        case let .updateEditMessage(data):
+            let (strippedMsg, changed) = stripTTLMessage(data.message)
+            if !changed {
+                return (update, false)
+            }
+            return (.updateEditMessage(Api.Update.Cons_updateEditMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
+        case let .updateEditChannelMessage(data):
+            let (strippedMsg, changed) = stripTTLMessage(data.message)
+            if !changed {
+                return (update, false)
+            }
+            return (.updateEditChannelMessage(Api.Update.Cons_updateEditChannelMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
+        case let .updateDeleteMessages(data):
+            if isAntiRevokeActive || isAntiSelfDestructActive {
+                for id in data.messages {
+                    TLParser.addDeletedId(id)
+                }
+                return (.updateDeleteMessages(Api.Update.Cons_updateDeleteMessages(messages: [], pts: data.pts, ptsCount: data.ptsCount)), true)
+            }
+            return (update, false)
+        case let .updateDeleteChannelMessages(data):
+            if isAntiRevokeActive || isAntiSelfDestructActive {
+                for id in data.messages {
+                    TLParser.addDeletedId(id)
+                }
+                return (.updateDeleteChannelMessages(Api.Update.Cons_updateDeleteChannelMessages(channelId: data.channelId, messages: [], pts: data.pts, ptsCount: data.ptsCount)), true)
+            }
+            return (update, false)
+        case let .updateReadMessagesContents(data):
+            if isAntiRevokeActive || isAntiSelfDestructActive {
+                for id in data.messages {
+                    TLParser.addDeletedId(id)
+                }
+                return (.updateReadMessagesContents(Api.Update.Cons_updateReadMessagesContents(flags: data.flags, messages: [], pts: data.pts, ptsCount: data.ptsCount, date: data.date)), true)
+            }
+            return (update, false)
+        case let .updateChannelReadMessagesContents(data):
+            if isAntiRevokeActive || isAntiSelfDestructActive {
+                for id in data.messages {
+                    TLParser.addDeletedId(id)
+                }
+                return (.updateChannelReadMessagesContents(Api.Update.Cons_updateChannelReadMessagesContents(flags: data.flags, channelId: data.channelId, topMsgId: data.topMsgId, savedPeerId: data.savedPeerId, messages: [])), true)
+            }
+            return (update, false)
         default:
             return (update, false)
         }
     }
 
     @objc static func stripAntiSelfDestruct(_ data: NSData) -> NSData? {
-        let isAntiSelfDestruct = UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct")
+        let isAntiSelfDestruct = isAntiSelfDestructActive
         let isNoForwardsBypass = isNoForwardsBypassActive
+        let isAntiRevoke = isAntiRevokeActive
         
-        guard isAntiSelfDestruct || isNoForwardsBypass else { return nil }
+        guard isAntiSelfDestruct || isNoForwardsBypass || isAntiRevoke else { return nil }
         let buffer = Buffer(data: data as Data)
         let reader = BufferReader(buffer)
         guard let signature = reader.readInt32() else { return nil }
@@ -717,7 +818,7 @@ class TLParser: NSObject {
                 var isDestructing = false
                 if data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0 {
                     isDestructing = true
-                    selfDestructingMessageIds.insert(data.id)
+                    addSelfDestructingId(data.id)
                 }
                 var newFlags = data.flags
                 if isDestructing {
@@ -730,7 +831,7 @@ class TLParser: NSObject {
                 // pересериализацию обычных сообщений и ломало rich notifications.
                 let hasNoForwards = (Int(data.flags) & (1 << 14)) != 0 || (Int(data.flags) & (1 << 26)) != 0
                 if hasNoForwards && (isNoForwardsBypassActive ||
-                   UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct")) {
+                   isAntiSelfDestructActive) {
                     newFlags &= ~(1 << 14)
                     newFlags &= ~(1 << 26)
                 }
@@ -748,7 +849,7 @@ class TLParser: NSObject {
                 var isDestructing = false
                 if data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0 {
                     isDestructing = true
-                    selfDestructingMessageIds.insert(data.id)
+                    addSelfDestructingId(data.id)
                 }
                 var newFlags = data.flags
                 if isDestructing {
@@ -759,7 +860,7 @@ class TLParser: NSObject {
                 // Only clear noforwards flags if they are actually set
                 let hasNoForwardsChatMsg = (Int(data.flags) & (1 << 14)) != 0 || (Int(data.flags) & (1 << 26)) != 0
                 if hasNoForwardsChatMsg && (isNoForwardsBypassActive ||
-                   UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct")) {
+                   isAntiSelfDestructActive) {
                     newFlags &= ~(1 << 14)
                     newFlags &= ~(1 << 26)
                 }

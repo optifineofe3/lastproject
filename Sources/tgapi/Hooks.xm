@@ -158,6 +158,7 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
 
 #define kUpdateDeleteMessages -1576161051
 #define kUpdateDeleteChannelMessages -1020437742
+#define kUpdateReadMessagesContents -131960447
 
 #define kUpdateEditMessage -469536605
 #define kUpdateEditChannelMessage 457133559
@@ -335,6 +336,39 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
         }
       }
     }
+    // Anti-Revoke & Anti-Self-Destruct: updateReadMessagesContents#F8227181
+    // Layout: [ctor:4][flags:4][vecCtor:4][count N:4][id1:4]...[idN:4][pts:4][ptsCount:4]
+    else if ((antiRevoke || antiSelfDestruct) &&
+             w == kUpdateReadMessagesContents && i + 16 <= len) {
+      int32_t vec = 0;
+      memcpy(&vec, bytes + i + 8, 4);
+      if (vec == kVectorConstructor) {
+        int32_t count = 0;
+        memcpy(&count, bytes + i + 12, 4);
+        if (count > 0 && count <= 65536) {
+          NSUInteger idsEnd = i + 16 + (NSUInteger)count * 4;
+          if (idsEnd <= len) {
+            NSMutableArray *deletedIdsArr = [NSMutableArray array];
+            for (int32_t k = 0; k < count; k++) {
+              int32_t origId = 0;
+              memcpy(&origId, bytes + i + 16 + k * 4, 4);
+              [NSClassFromString(@"TLParser") addDeletedId:origId];
+              [deletedIdsArr addObject:@(origId)];
+            }
+            if (deletedIdsArr.count > 0) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:@"LeadMessageDeletedRealtime"
+                                  object:nil
+                                userInfo:@{@"ids" : deletedIdsArr}];
+              });
+            }
+            memset(bytes + i + 16, 0, (NSUInteger)count * 4);
+            modified = YES;
+          }
+        }
+      }
+    }
   }
 
   return modified ? mData : nil;
@@ -357,8 +391,8 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
     // long)data.length, (uint32_t)ctor);
 
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-    BOOL antiRevoke = [defaults boolForKey:kAntiRevoke];
-    BOOL antiSelfDestruct = [defaults boolForKey:kAntiSelfDestruct];
+    BOOL antiRevoke = [defaults objectForKey:kAntiRevoke] ? [defaults boolForKey:kAntiRevoke] : YES;
+    BOOL antiSelfDestruct = [defaults objectForKey:kAntiSelfDestruct] ? [defaults boolForKey:kAntiSelfDestruct] : YES;
     BOOL modified = NO;
 
     if (antiRevoke || antiSelfDestruct) {

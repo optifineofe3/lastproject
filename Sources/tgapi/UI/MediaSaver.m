@@ -559,7 +559,7 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
     
     if (isSecret) {
         [NSLayoutConstraint activateConstraints:@[
-            [btn.topAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.topAnchor constant:12],
+            [btn.topAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.topAnchor constant:64],
             [btn.leadingAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.leadingAnchor constant:16],
             [btn.widthAnchor constraintEqualToConstant:42],
             [btn.heightAnchor constraintEqualToConstant:42]

@@ -1,11 +1,14 @@
 #import <UIKit/UIKit.h>
 #import <UIKit/UIGestureRecognizerSubclass.h>
 #import "Headers.h"
+#import "../Headers.h"
 #import "MediaSaver.h"
 
 // Menu Open
 @interface ASDisplayNode : NSObject
 @property (atomic, assign, readonly) UIView *view;
+@property (atomic, assign, readonly) CGRect bounds;
+@property (atomic, assign, readonly) BOOL isNodeLoaded;
 @property (atomic, copy, readonly) NSArray *subnodes;
 @property (atomic, copy, readwrite) NSString *accessibilityLabel;
 @property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
@@ -59,6 +62,78 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 }
 @end
 
+static CGRect getContentFrameOfNode(ASDisplayNode *node) {
+    if ([node respondsToSelector:@selector(contentFrame)]) {
+        SEL sel = @selector(contentFrame);
+        NSMethodSignature *sig = [node methodSignatureForSelector:sel];
+        if (sig && strcmp([sig methodReturnType], @encode(CGRect)) == 0) {
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:node];
+            [inv setSelector:sel];
+            [inv invoke];
+            CGRect rect;
+            [inv getReturnValue:&rect];
+            if (!CGRectIsEmpty(rect) && !CGRectIsNull(rect)) {
+                return rect;
+            }
+        }
+    }
+    return node.bounds;
+}
+
+static void updateDeletedBadgeForNode(ASDisplayNode *node) {
+    if (!node || !node.isNodeLoaded) return;
+    UIView *v = node.view;
+    if (!v) return;
+
+    NSNumber *msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
+    BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
+
+    UILabel *badge = (UILabel *)[v viewWithTag:998855];
+    if (!isDel) {
+        if (badge) {
+            badge.hidden = YES;
+        }
+        return;
+    }
+
+    if (!badge) {
+        badge = [[UILabel alloc] init];
+        badge.tag = 998855;
+        badge.text = @"🗑️";
+        badge.textAlignment = NSTextAlignmentCenter;
+        badge.font = [UIFont systemFontOfSize:11];
+        badge.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
+        badge.layer.cornerRadius = 9.0;
+        badge.layer.masksToBounds = YES;
+        badge.layer.zPosition = 1000;
+        badge.userInteractionEnabled = NO;
+        [v addSubview:badge];
+    }
+
+    badge.hidden = NO;
+    CGRect bFrame = getContentFrameOfNode(node);
+    CGFloat badgeSize = 18.0;
+    CGFloat x = CGRectGetMaxX(bFrame) - badgeSize - 4.0;
+    CGFloat y = CGRectGetMinY(bFrame) + 4.0;
+    if (x < CGRectGetMinX(bFrame) + 2.0) {
+        x = CGRectGetMinX(bFrame) + 2.0;
+    }
+    badge.frame = CGRectMake(x, y, badgeSize, badgeSize);
+    [v bringSubviewToFront:badge];
+}
+
+static void refreshDeletedBadgesInView(UIView *view) {
+    if (!view) return;
+    NSString *className = NSStringFromClass([view class]);
+    if ([className containsString:@"ChatMessage"]) {
+        [view setNeedsLayout];
+    }
+    for (UIView *sub in view.subviews) {
+        refreshDeletedBadgesInView(sub);
+    }
+}
+
 %hook ASDisplayNode
 %property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
 %property (nonatomic, strong) UITapGestureRecognizer *tapGesture;
@@ -79,6 +154,8 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
             [v addGestureRecognizer:doubleTap];
         }
         [MediaSaver attachInstantVideoButtonToNode:self];
+    } else if ([className containsString:@"ChatMessage"] && [className containsString:@"Item"] && ![className containsString:@"Content"]) {
+        updateDeletedBadgeForNode(self);
     }
 }
 
@@ -87,6 +164,8 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
     NSString *className = NSStringFromClass([self class]);
     if ([className containsString:@"InstantVideo"] || [className containsString:@"OverlayInstantVideoNode"]) {
         [MediaSaver attachInstantVideoButtonToNode:self];
+    } else if ([className containsString:@"ChatMessage"] && [className containsString:@"Item"] && ![className containsString:@"Content"]) {
+        updateDeletedBadgeForNode(self);
     }
 }
 
@@ -492,6 +571,15 @@ static void hook() {
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
         kDisableForwardRestriction: @YES,
         kAntiSelfDestruct: @YES,
+        kAntiRevoke: @YES,
+        kAntiAutoDelete: @YES,
+    }];
+
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"LeadMessageDeletedRealtime" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
+        (void)note;
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            refreshDeletedBadgesInView(w);
+        }
     }];
 
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
