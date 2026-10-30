@@ -282,21 +282,21 @@ static BOOL isDisplayingVideo(UIView *view) {
     return NO;
 }
 
-static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), void (^checkLayerContents)(CGImageRef cg)) {
-    if (!v || v.hidden || v.alpha < 0.05) return;
+static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img), void (^checkLayerContents)(CGImageRef cg)) {
+    if (!view || view.hidden || view.alpha < 0.05) return;
     @try {
-        if (isViewVisibleInWindow(v)) {
-            id contents = v.layer.contents;
+        if (isViewVisibleInWindow(view)) {
+            id contents = view.layer.contents;
             if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
                 checkLayerContents((__bridge CGImageRef)contents);
             }
             
-            if ([v isKindOfClass:[UIImageView class]]) {
-                checkImage([(UIImageView *)v image]);
+            if ([view isKindOfClass:[UIImageView class]]) {
+                checkImage([(UIImageView *)view image]);
             }
             
             @try {
-                id node = [v valueForKey:@"asyncdisplaykit_node"];
+                id node = [view valueForKey:@"asyncdisplaykit_node"];
                 if (node && [node respondsToSelector:@selector(image)]) {
                     checkImage([node performSelector:@selector(image)]);
                 }
