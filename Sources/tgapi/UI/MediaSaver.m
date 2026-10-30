@@ -572,20 +572,25 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     };
     
     PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
+    BOOL authorized = NO;
     if (@available(iOS 14.0, *)) {
-        if (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited) {
-            saveBlock();
-            return;
-        }
+        authorized = (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited);
     } else {
-        if (status == PHAuthorizationStatusAuthorized) {
-            saveBlock();
-            return;
-        }
+        authorized = (status == PHAuthorizationStatusAuthorized);
+    }
+    if (authorized) {
+        saveBlock();
+        return;
     }
     
     [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus newStatus) {
-        if (newStatus == PHAuthorizationStatusAuthorized || (@available(iOS 14.0, *) && newStatus == PHAuthorizationStatusLimited)) {
+        BOOL granted = (newStatus == PHAuthorizationStatusAuthorized);
+        if (@available(iOS 14.0, *)) {
+            if (newStatus == PHAuthorizationStatusLimited) {
+                granted = YES;
+            }
+        }
+        if (granted) {
             saveBlock();
         } else {
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -616,20 +621,25 @@ static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), vo
     };
     
     PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
+    BOOL authorized = NO;
     if (@available(iOS 14.0, *)) {
-        if (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited) {
-            saveBlock();
-            return;
-        }
+        authorized = (status == PHAuthorizationStatusAuthorized || status == PHAuthorizationStatusLimited);
     } else {
-        if (status == PHAuthorizationStatusAuthorized) {
-            saveBlock();
-            return;
-        }
+        authorized = (status == PHAuthorizationStatusAuthorized);
+    }
+    if (authorized) {
+        saveBlock();
+        return;
     }
     
     [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus newStatus) {
-        if (newStatus == PHAuthorizationStatusAuthorized || (@available(iOS 14.0, *) && newStatus == PHAuthorizationStatusLimited)) {
+        BOOL granted = (newStatus == PHAuthorizationStatusAuthorized);
+        if (@available(iOS 14.0, *)) {
+            if (newStatus == PHAuthorizationStatusLimited) {
+                granted = YES;
+            }
+        }
+        if (granted) {
             saveBlock();
         } else {
             dispatch_async(dispatch_get_main_queue(), ^{
