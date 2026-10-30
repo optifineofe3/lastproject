@@ -382,8 +382,15 @@ class TLParser: NSObject {
         }
     }
 
+    private static var isNoForwardsBypassActive: Bool {
+        if UserDefaults.standard.object(forKey: "disableForwardRestriction") == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: "disableForwardRestriction")
+    }
+
     private static func stripNoForwards(_ chat: Api.Chat) -> (Api.Chat, Bool) {
-        guard UserDefaults.standard.bool(forKey: "disableForwardRestriction") ||
+        guard isNoForwardsBypassActive ||
               UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") ||
               UserDefaults.standard.bool(forKey: "LeadAntiAutoDelete") else { return (chat, false) }
               
@@ -445,7 +452,7 @@ class TLParser: NSObject {
     }
     
     private static func stripNoForwardsFromFullChat(_ chatFull: Api.ChatFull) -> (Api.ChatFull, Bool) {
-        guard UserDefaults.standard.bool(forKey: "disableForwardRestriction") ||
+        guard isNoForwardsBypassActive ||
               UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") ||
               UserDefaults.standard.bool(forKey: "LeadAntiAutoDelete") else { return (chatFull, false) }
               
@@ -554,7 +561,7 @@ class TLParser: NSObject {
     }
 
     private static func stripTTLMessage(_ apiMsg: Api.Message) -> (Api.Message, Bool) {
-        guard UserDefaults.standard.bool(forKey: "disableForwardRestriction") || 
+        guard isNoForwardsBypassActive || 
               UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") else { return (apiMsg, false) }
         guard case let .message(data) = apiMsg else {
             return (apiMsg, false)
@@ -577,7 +584,7 @@ class TLParser: NSObject {
         var newFlags2 = data.flags2
         
         // Strip noforwards if requested
-        if UserDefaults.standard.bool(forKey: "disableForwardRestriction") || 
+        if isNoForwardsBypassActive || 
            UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct") {
             // Bit 14 is standard, bit 26 is used in neutralizePayload
             let mask: Int32 = ~( (1 << 14) | (1 << 26) )
@@ -648,7 +655,7 @@ class TLParser: NSObject {
 
     @objc static func stripAntiSelfDestruct(_ data: NSData) -> NSData? {
         let isAntiSelfDestruct = UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct")
-        let isNoForwardsBypass = UserDefaults.standard.bool(forKey: "disableForwardRestriction")
+        let isNoForwardsBypass = isNoForwardsBypassActive
         
         guard isAntiSelfDestruct || isNoForwardsBypass else { return nil }
         let buffer = Buffer(data: data as Data)
@@ -721,7 +728,7 @@ class TLParser: NSObject {
                 // unconditionally clearing them on every message caused
                 // pересериализацию обычных сообщений и ломало rich notifications.
                 let hasNoForwards = (Int(data.flags) & (1 << 14)) != 0 || (Int(data.flags) & (1 << 26)) != 0
-                if hasNoForwards && (UserDefaults.standard.bool(forKey: "disableForwardRestriction") ||
+                if hasNoForwards && (isNoForwardsBypassActive ||
                    UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct")) {
                     newFlags &= ~(1 << 14)
                     newFlags &= ~(1 << 26)
@@ -750,7 +757,7 @@ class TLParser: NSObject {
 
                 // Only clear noforwards flags if they are actually set
                 let hasNoForwardsChatMsg = (Int(data.flags) & (1 << 14)) != 0 || (Int(data.flags) & (1 << 26)) != 0
-                if hasNoForwardsChatMsg && (UserDefaults.standard.bool(forKey: "disableForwardRestriction") ||
+                if hasNoForwardsChatMsg && (isNoForwardsBypassActive ||
                    UserDefaults.standard.bool(forKey: "LeadAntiSelfDestruct")) {
                     newFlags &= ~(1 << 14)
                     newFlags &= ~(1 << 26)

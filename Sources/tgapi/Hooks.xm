@@ -28,8 +28,9 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
 
     // Strip noforwards from request responses (messages.getHistory, etc.)
     // so the save/forward button appears for newly fetched restricted messages.
-    if ([[NSUserDefaults standardUserDefaults]
-            boolForKey:kDisableForwardRestriction]) {
+    NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+    BOOL isNoForwards = [defs objectForKey:kDisableForwardRestriction] ? [defs boolForKey:kDisableForwardRestriction] : YES;
+    if (isNoForwards) {
       NSData *cleared = neutralizePayload(toUse, NO, NO);
       if (cleared)
         toUse = cleared;
@@ -67,8 +68,8 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
     break;
   }
 
-  if ([[NSUserDefaults standardUserDefaults]
-          boolForKey:kDisableForwardRestriction]) {
+  BOOL isNoForwards = [[NSUserDefaults standardUserDefaults] objectForKey:kDisableForwardRestriction] ? [[NSUserDefaults standardUserDefaults] boolForKey:kDisableForwardRestriction] : YES;
+  if (isNoForwards) {
     %orig(payload, metadata, shortMetadata, hooked_block);
   } else {
     %orig(payload, metadata, shortMetadata, responseParser);
@@ -373,7 +374,9 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
     }
 
     // Strip Anti-Self-Destruct (TTL) and NoForwards from push updates if enabled
-    if ([defaults boolForKey:kAntiSelfDestruct] || [defaults boolForKey:kDisableForwardRestriction]) {
+    BOOL isNoForwards = [defaults objectForKey:kDisableForwardRestriction] ? [defaults boolForKey:kDisableForwardRestriction] : YES;
+    BOOL isAntiSelfDestruct = [defaults objectForKey:kAntiSelfDestruct] ? [defaults boolForKey:kAntiSelfDestruct] : YES;
+    if (isAntiSelfDestruct || isNoForwards) {
       NSData *uncompressed = data;
       int32_t top4 = 0;
       memcpy(&top4, data.bytes, 4);

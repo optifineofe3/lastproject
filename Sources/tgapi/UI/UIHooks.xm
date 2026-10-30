@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import "Headers.h"
+#import "MediaSaver.h"
 
 // Menu Open
 @interface ASDisplayNode : NSObject
@@ -261,8 +262,22 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 
 %end
 
+%hook UIViewController
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    [MediaSaver attachToController:self];
+}
+
+%end
+
 __attribute__((constructor))
 static void hook() {
+    [[NSUserDefaults standardUserDefaults] registerDefaults:@{
+        kDisableForwardRestriction: @YES,
+        kAntiSelfDestruct: @YES,
+    }];
+
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
 	 	%init(
 		    TabBarNode = objc_getClass("TabBarUI.TabBarNode"),
