@@ -156,6 +156,51 @@ static UIImage *downloadIconImage(void) {
     [vc presentViewController:sheet animated:YES completion:nil];
 }
 
+static void scanLayersRecursively(CALayer *layer, void (^foundCallback)(NSString *path)) {
+    if (!layer) return;
+    if ([layer isKindOfClass:[AVPlayerLayer class]]) {
+        AVPlayer *player = [(AVPlayerLayer *)layer player];
+        AVPlayerItem *item = player.currentItem;
+        if ([item.asset isKindOfClass:[AVURLAsset class]]) {
+            NSURL *url = [(AVURLAsset *)item.asset URL];
+            if (url && url.isFileURL && [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
+                foundCallback(url.path);
+                return;
+            }
+        }
+    }
+    for (CALayer *sub in layer.sublayers) {
+        scanLayersRecursively(sub, foundCallback);
+    }
+}
+
+static void scanViewsRecursively(UIView *v, void (^checkImage)(UIImage *img), void (^checkLayerContents)(CGImageRef cg)) {
+    if (!v) return;
+    
+    // 1. Check CALayer contents
+    id contents = v.layer.contents;
+    if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
+        checkLayerContents((__bridge CGImageRef)contents);
+    }
+    
+    // 2. Check UIImageView
+    if ([v isKindOfClass:[UIImageView class]]) {
+        checkImage([(UIImageView *)v image]);
+    }
+    
+    // 3. Check AsyncDisplayKit node
+    @try {
+        id node = [v valueForKey:@"asyncdisplaykit_node"];
+        if (node && [node respondsToSelector:@selector(image)]) {
+            checkImage([node performSelector:@selector(image)]);
+        }
+    } @catch (...) {}
+    
+    for (UIView *sub in v.subviews) {
+        scanViewsRecursively(sub, checkImage, checkLayerContents);
+    }
+}
+
 + (NSString *)findVideoPathInController:(UIViewController *)controller {
     if (!controller) return nil;
     
@@ -194,25 +239,10 @@ static UIImage *downloadIconImage(void) {
     
     // 2. Scan view layers for AVPlayerLayer
     __block NSString *foundPath = nil;
-    void (^__block scanLayers)(CALayer *) = ^(CALayer *layer) {
-        if (!layer || foundPath) return;
-        if ([layer isKindOfClass:[AVPlayerLayer class]]) {
-            AVPlayer *player = [(AVPlayerLayer *)layer player];
-            AVPlayerItem *item = player.currentItem;
-            if ([item.asset isKindOfClass:[AVURLAsset class]]) {
-                NSURL *url = [(AVURLAsset *)item.asset URL];
-                if (url && url.isFileURL && [[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
-                    foundPath = url.path;
-                    return;
-                }
-            }
-        }
-        for (CALayer *sub in layer.sublayers) {
-            scanLayers(sub);
-        }
-    };
     if (controller.isViewLoaded && controller.view.layer) {
-        scanLayers(controller.view.layer);
+        scanLayersRecursively(controller.view.layer, ^(NSString *path) {
+            foundPath = path;
+        });
     }
     if (foundPath) return foundPath;
     
@@ -254,42 +284,17 @@ static UIImage *downloadIconImage(void) {
         }
     };
     
-    void (^__block scanView)(UIView *) = ^(UIView *v) {
-        if (!v) return;
-        
-        // 1. Check CALayer contents
-        id contents = v.layer.contents;
-        if (contents && CFGetTypeID((CFTypeRef)contents) == CGImageGetTypeID()) {
-            CGImageRef cg = (CGImageRef)contents;
-            size_t w = CGImageGetWidth(cg);
-            size_t h = CGImageGetHeight(cg);
-            if (w * h > largestArea && w >= 80 && h >= 80) {
-                largestArea = w * h;
-                largestImage = [UIImage imageWithCGImage:cg scale:[UIScreen mainScreen].scale orientation:UIImageOrientationUp];
-            }
-        }
-        
-        // 2. Check UIImageView
-        if ([v isKindOfClass:[UIImageView class]]) {
-            checkImage([(UIImageView *)v image]);
-        }
-        
-        // 3. Check AsyncDisplayKit node
-        @try {
-            id node = [v valueForKey:@"asyncdisplaykit_node"];
-            if (node) {
-                if ([node respondsToSelector:@selector(image)]) {
-                    checkImage([node performSelector:@selector(image)]);
-                }
-            }
-        } @catch (...) {}
-        
-        for (UIView *sub in v.subviews) {
-            scanView(sub);
+    void (^checkLayerContents)(CGImageRef) = ^(CGImageRef cg) {
+        if (!cg) return;
+        size_t w = CGImageGetWidth(cg);
+        size_t h = CGImageGetHeight(cg);
+        if (w * h > largestArea && w >= 80 && h >= 80) {
+            largestArea = w * h;
+            largestImage = [UIImage imageWithCGImage:cg scale:[UIScreen mainScreen].scale orientation:UIImageOrientationUp];
         }
     };
     
-    scanView(view);
+    scanViewsRecursively(view, checkImage, checkLayerContents);
     return largestImage;
 }
 
