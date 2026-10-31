@@ -6,8 +6,6 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
                                  BOOL antiSelfDestruct);
 
 #define kChannelsReadHistory -871347913
-#define kGzipPackedCtor ((int32_t)0x3072CFA1)
-
 
 %hook MTRequest %property(nonatomic, strong) NSData *fakeData;
 %property(nonatomic, strong) NSNumber *functionID;
@@ -23,42 +21,17 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
   self.functionID = [NSNumber numberWithInt:functionID];
 
   id (^hooked_block)(NSData *) = ^(NSData *inputData) {
-    NSData *uncompressed = inputData;
-    if (inputData && inputData.length >= 8) {
-      int32_t top4 = 0;
-      memcpy(&top4, inputData.bytes, 4);
-      if (top4 == kGzipPackedCtor) {
-        const uint8_t *b = (const uint8_t *)inputData.bytes;
-        uint32_t offset = 4;
-        uint32_t gzipLen = 0;
-        uint8_t first = b[offset];
-        if (first < 0xFE) {
-          gzipLen = first;
-          offset += 1;
-        } else if (first == 0xFE && inputData.length > offset + 3) {
-          gzipLen = (uint32_t)b[offset + 1] | ((uint32_t)b[offset + 2] << 8) |
-                    ((uint32_t)b[offset + 3] << 16);
-          offset += 4;
-        }
-        if (gzipLen > 0 && offset + gzipLen <= inputData.length) {
-          NSData *inner = decompressGzip(b + offset, gzipLen);
-          if (inner)
-            uncompressed = inner;
-        }
-      }
-    }
-
     NSNumber *functionIDNumber = [NSNumber numberWithUnsignedInt:functionID];
     NSData *parsed =
-        [TLParser handleResponse:uncompressed functionID:functionIDNumber];
-    NSData *toUse = parsed ?: uncompressed;
+        [TLParser handleResponse:inputData functionID:functionIDNumber];
+    NSData *toUse = parsed ?: inputData;
 
-    // Neutralize deletions / self-destruct from request responses
+    // Strip noforwards from request responses (messages.getHistory, etc.)
+    // so the save/forward button appears for newly fetched restricted messages.
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    BOOL antiRevoke = [defs objectForKey:kAntiRevoke] ? [defs boolForKey:kAntiRevoke] : YES;
-    BOOL antiSelfDestruct = [defs objectForKey:kAntiSelfDestruct] ? [defs boolForKey:kAntiSelfDestruct] : YES;
-    if (antiRevoke || antiSelfDestruct) {
-      NSData *cleared = neutralizePayload(toUse, antiRevoke, antiSelfDestruct);
+    BOOL isNoForwards = [defs objectForKey:kDisableForwardRestriction] ? [defs boolForKey:kDisableForwardRestriction] : YES;
+    if (isNoForwards) {
+      NSData *cleared = neutralizePayload(toUse, NO, NO);
       if (cleared)
         toUse = cleared;
     }
@@ -95,11 +68,8 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
     break;
   }
 
-  NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-  BOOL isNoForwards = [defs objectForKey:kDisableForwardRestriction] ? [defs boolForKey:kDisableForwardRestriction] : YES;
-  BOOL antiRevoke = [defs objectForKey:kAntiRevoke] ? [defs boolForKey:kAntiRevoke] : YES;
-  BOOL antiSelfDestruct = [defs objectForKey:kAntiSelfDestruct] ? [defs boolForKey:kAntiSelfDestruct] : YES;
-  if (isNoForwards || antiRevoke || antiSelfDestruct) {
+  BOOL isNoForwards = [[NSUserDefaults standardUserDefaults] objectForKey:kDisableForwardRestriction] ? [[NSUserDefaults standardUserDefaults] boolForKey:kDisableForwardRestriction] : YES;
+  if (isNoForwards) {
     %orig(payload, metadata, shortMetadata, hooked_block);
   } else {
     %orig(payload, metadata, shortMetadata, responseParser);
@@ -204,7 +174,7 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
 #define kDummyConstructor 0x00000001
 
 // gzip_packed#3072cfa1 — Telegram wraps large updates in gzip to save bandwidth
-// kGzipPackedCtor defined above
+#define kGzipPackedCtor ((int32_t)0x3072CFA1)
 
     // ============================================================
     // decompressGzip — inflate a raw gzip/zlib byte stream.

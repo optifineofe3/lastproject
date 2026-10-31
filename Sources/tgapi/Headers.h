@@ -13,8 +13,6 @@
 + (BOOL)isDeleted:(NSNumber *)msgId;
 + (BOOL)isEdited:(NSNumber *)msgId;
 + (BOOL)isNodeEdited:(id)node;
-+ (BOOL)isNodeExpired:(id)node;
-+ (void)recordSelfDestructingId:(NSNumber *)msgId;
 + (NSString *)getOriginalTextForId:(NSNumber *)msgId;
 + (NSArray *)getEditHistoryForNode:(id)node;
 + (NSData *)stripAntiSelfDestruct:(NSData *)data;
