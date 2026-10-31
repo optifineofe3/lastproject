@@ -1206,12 +1206,10 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         cardY = screenH - contentH - 40.0;
     }
 
-    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
-    UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:blur];
-    card.frame = CGRectMake(cardX, cardY, cardW, contentH);
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(cardX, cardY, cardW, contentH)];
+    card.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.97];
     card.layer.cornerRadius = 14.0;
     card.layer.masksToBounds = YES;
-    card.layer.borderWidth = 0.0; // No border
     card.transform = CGAffineTransformMakeScale(0.92, 0.92);
 
     UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, cardW, contentH)];
@@ -1249,7 +1247,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         currY += textH + 14.0;
     }
     scrollView.contentSize = CGSizeMake(cardW, currY);
-    [card.contentView addSubview:scrollView];
+    [card addSubview:scrollView];
 
     [backdrop addSubview:card];
     [window addSubview:backdrop];

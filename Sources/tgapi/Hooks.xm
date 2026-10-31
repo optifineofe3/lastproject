@@ -21,17 +21,42 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
   self.functionID = [NSNumber numberWithInt:functionID];
 
   id (^hooked_block)(NSData *) = ^(NSData *inputData) {
+    NSData *uncompressed = inputData;
+    if (inputData && inputData.length >= 8) {
+      int32_t top4 = 0;
+      memcpy(&top4, inputData.bytes, 4);
+      if (top4 == kGzipPackedCtor) {
+        const uint8_t *b = (const uint8_t *)inputData.bytes;
+        uint32_t offset = 4;
+        uint32_t gzipLen = 0;
+        uint8_t first = b[offset];
+        if (first < 0xFE) {
+          gzipLen = first;
+          offset += 1;
+        } else if (first == 0xFE && inputData.length > offset + 3) {
+          gzipLen = (uint32_t)b[offset + 1] | ((uint32_t)b[offset + 2] << 8) |
+                    ((uint32_t)b[offset + 3] << 16);
+          offset += 4;
+        }
+        if (gzipLen > 0 && offset + gzipLen <= inputData.length) {
+          NSData *inner = decompressGzip(b + offset, gzipLen);
+          if (inner)
+            uncompressed = inner;
+        }
+      }
+    }
+
     NSNumber *functionIDNumber = [NSNumber numberWithUnsignedInt:functionID];
     NSData *parsed =
-        [TLParser handleResponse:inputData functionID:functionIDNumber];
-    NSData *toUse = parsed ?: inputData;
+        [TLParser handleResponse:uncompressed functionID:functionIDNumber];
+    NSData *toUse = parsed ?: uncompressed;
 
-    // Strip noforwards from request responses (messages.getHistory, etc.)
-    // so the save/forward button appears for newly fetched restricted messages.
+    // Neutralize deletions / self-destruct from request responses
     NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
-    BOOL isNoForwards = [defs objectForKey:kDisableForwardRestriction] ? [defs boolForKey:kDisableForwardRestriction] : YES;
-    if (isNoForwards) {
-      NSData *cleared = neutralizePayload(toUse, NO, NO);
+    BOOL antiRevoke = [defs objectForKey:kAntiRevoke] ? [defs boolForKey:kAntiRevoke] : YES;
+    BOOL antiSelfDestruct = [defs objectForKey:kAntiSelfDestruct] ? [defs boolForKey:kAntiSelfDestruct] : YES;
+    if (antiRevoke || antiSelfDestruct) {
+      NSData *cleared = neutralizePayload(toUse, antiRevoke, antiSelfDestruct);
       if (cleared)
         toUse = cleared;
     }
@@ -68,8 +93,11 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
     break;
   }
 
-  BOOL isNoForwards = [[NSUserDefaults standardUserDefaults] objectForKey:kDisableForwardRestriction] ? [[NSUserDefaults standardUserDefaults] boolForKey:kDisableForwardRestriction] : YES;
-  if (isNoForwards) {
+  NSUserDefaults *defs = [NSUserDefaults standardUserDefaults];
+  BOOL isNoForwards = [defs objectForKey:kDisableForwardRestriction] ? [defs boolForKey:kDisableForwardRestriction] : YES;
+  BOOL antiRevoke = [defs objectForKey:kAntiRevoke] ? [defs boolForKey:kAntiRevoke] : YES;
+  BOOL antiSelfDestruct = [defs objectForKey:kAntiSelfDestruct] ? [defs boolForKey:kAntiSelfDestruct] : YES;
+  if (isNoForwards || antiRevoke || antiSelfDestruct) {
     %orig(payload, metadata, shortMetadata, hooked_block);
   } else {
     %orig(payload, metadata, shortMetadata, responseParser);

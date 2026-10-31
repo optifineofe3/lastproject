@@ -847,7 +847,7 @@ class TLParser: NSObject {
 
     private static func addSelfDestructingId(_ id: Int32) {
         guard id != 0 else { return }
-        selfDestructQueue.async(flags: .barrier) {
+        selfDestructQueue.sync(flags: .barrier) {
             if !_selfDestructLoaded {
                 _selfDestructLoaded = true
                 let saved = (UserDefaults.standard.array(forKey: selfDestructUdKey) as? [Int32]) ?? []
@@ -861,6 +861,27 @@ class TLParser: NSObject {
                 UserDefaults.standard.set(saved, forKey: selfDestructUdKey)
             }
         }
+    }
+
+    @objc static func recordSelfDestructingId(_ msgId: NSNumber) {
+        addSelfDestructingId(msgId.int32Value)
+    }
+
+    @objc static func isNodeExpired(_ node: Any) -> Bool {
+        if let msgId = getMessageIdFromNode(node) {
+            if isMessageSelfDestructing(msgId) { return true }
+        }
+        let nodeDesc = String(describing: node)
+        if nodeDesc.contains("AutoremoveTimeoutMessageAttribute") || 
+           nodeDesc.contains("AutoclearTimeoutMessageAttribute") ||
+           nodeDesc.contains("viewOnce") ||
+           nodeDesc.contains("TelegramMediaExpiredContent") {
+            if let msgId = getMessageIdFromNode(node) {
+                addSelfDestructingId(msgId.int32Value)
+            }
+            return true
+        }
+        return false
     }
 
     @objc static func isMessageSelfDestructing(_ msgId: NSNumber) -> Bool {
@@ -1117,10 +1138,8 @@ class TLParser: NSObject {
             return stripped
         }
         
-        let isMediaDestructing = selfDestructingMessageIds.contains(data.id)
-        let shouldStripFlags = isDestructing || isMediaDestructing
-        
-        let (newMessageText, newEntities) = applyTTLIndicator(message: data.message, entities: data.entities, shouldApply: shouldStripFlags)
+        let isMediaDestructing = isDestructing || selfDestructingMessageIds.contains(data.id)
+        let shouldStripFlags = isMediaDestructing
         
         var newFlags = shouldStripFlags ? (data.flags & ~(1 << 25) & ~(1 << 5)) : data.flags
         var newFlags2 = data.flags2
@@ -1135,7 +1154,7 @@ class TLParser: NSObject {
         }
         
         // Set entities flag (bit 7) if we have entities
-        if (newEntities?.count ?? 0) > 0 {
+        if (data.entities?.count ?? 0) > 0 {
             newFlags |= (1 << 7)
         }
         
@@ -1147,8 +1166,8 @@ class TLParser: NSObject {
             viaBotId: data.viaBotId, viaBusinessBotId: data.viaBusinessBotId,
             guestchatViaFrom: data.guestchatViaFrom,
             replyTo: data.replyTo, date: data.date,
-            message: newMessageText,
-            media: newMedia, replyMarkup: data.replyMarkup, entities: newEntities,
+            message: data.message,
+            media: newMedia, replyMarkup: data.replyMarkup, entities: data.entities,
             views: data.views, forwards: data.forwards, replies: data.replies,
             editDate: data.editDate, postAuthor: data.postAuthor, groupedId: data.groupedId,
             reactions: data.reactions, restrictionReason: data.restrictionReason,
@@ -1161,8 +1180,6 @@ class TLParser: NSObject {
         ))
         
         let modified = (newFlags != data.flags) || 
-                       (newMessageText != data.message) || 
-                       (newEntities?.count != data.entities?.count) || 
                        (newFlags2 != data.flags2) || 
                        ttlChanged || 
                        mediaChanged

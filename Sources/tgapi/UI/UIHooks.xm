@@ -103,15 +103,18 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     NSNumber *msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
     BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
     BOOL isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
+    BOOL isExpired = (msgId != nil && [NSClassFromString(@"TLParser") isMessageSelfDestructing:msgId]) || [NSClassFromString(@"TLParser") isNodeExpired:node];
 
     UILabel *delBadge = (UILabel *)[v viewWithTag:998855];
     UILabel *editBadge = (UILabel *)[v viewWithTag:998856];
+    UILabel *expiredBadge = (UILabel *)[v viewWithTag:998857];
     UIView *origView = [v viewWithTag:998866];
     if (origView) origView.hidden = YES;
 
-    if (!isDel && !isEdit) {
+    if (!isDel && !isEdit && !isExpired) {
         if (delBadge) delBadge.hidden = YES;
         if (editBadge) editBadge.hidden = YES;
+        if (expiredBadge) expiredBadge.hidden = YES;
         return;
     }
 
@@ -164,6 +167,25 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         if (editBadge) editBadge.hidden = YES;
     }
 
+    if (isExpired) {
+        if (!expiredBadge) {
+            expiredBadge = [[UILabel alloc] init];
+            expiredBadge.tag = 998857;
+            expiredBadge.textAlignment = NSTextAlignmentCenter;
+            expiredBadge.font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
+            expiredBadge.textColor = [UIColor whiteColor];
+            expiredBadge.backgroundColor = [UIColor colorWithRed:0.85 green:0.55 blue:0.10 alpha:0.85];
+            expiredBadge.layer.masksToBounds = YES;
+            expiredBadge.layer.zPosition = 1000;
+            expiredBadge.userInteractionEnabled = NO;
+            [v addSubview:expiredBadge];
+        }
+        expiredBadge.text = @"EXPIRED";
+        expiredBadge.hidden = NO;
+    } else {
+        if (expiredBadge) expiredBadge.hidden = YES;
+    }
+
     CGRect bFrame = getContentFrameOfNode(node);
     CGFloat badgeHeight = 15.0;
     CGFloat y = CGRectGetMinY(bFrame) + (bFrame.size.height - badgeHeight) / 2.0;
@@ -175,35 +197,39 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     CGSize editSize = [@"EDITED" sizeWithAttributes:@{NSFontAttributeName: font}];
     CGFloat editW = MAX(editSize.width + 10.0, 42.0);
 
+    CGSize expiredSize = [@"EXPIRED" sizeWithAttributes:@{NSFontAttributeName: font}];
+    CGFloat expiredW = MAX(expiredSize.width + 10.0, 48.0);
+
     CGFloat maxX = CGRectGetMaxX(bFrame) - 4.0;
     CGFloat minX = CGRectGetMinX(bFrame) + 2.0;
 
-    if (isDel && isEdit) {
-        delBadge.layer.cornerRadius = badgeHeight / 2.0;
+    // Position badges right-to-left: EXPIRED → EDITED → DEL
+    CGFloat curX = maxX;
+
+    if (isExpired && !expiredBadge.hidden) {
+        expiredBadge.layer.cornerRadius = badgeHeight / 2.0;
+        curX -= expiredW;
+        if (curX < minX) curX = minX;
+        expiredBadge.frame = CGRectMake(curX, y, expiredW, badgeHeight);
+        [v bringSubviewToFront:expiredBadge];
+        curX -= 3.0;
+    }
+
+    if (isEdit && !editBadge.hidden) {
         editBadge.layer.cornerRadius = badgeHeight / 2.0;
-
-        CGFloat editX = maxX - editW;
-        if (editX < minX) editX = minX;
-        editBadge.frame = CGRectMake(editX, y, editW, badgeHeight);
-
-        CGFloat delX = editX - delW - 3.0;
-        if (delX < minX) delX = minX;
-        delBadge.frame = CGRectMake(delX, y, delW, badgeHeight);
-
-        [v bringSubviewToFront:delBadge];
+        curX -= editW;
+        if (curX < minX) curX = minX;
+        editBadge.frame = CGRectMake(curX, y, editW, badgeHeight);
         [v bringSubviewToFront:editBadge];
-    } else if (isDel) {
+        curX -= 3.0;
+    }
+
+    if (isDel && !delBadge.hidden) {
         delBadge.layer.cornerRadius = badgeHeight / 2.0;
-        CGFloat x = maxX - delW;
-        if (x < minX) x = minX;
-        delBadge.frame = CGRectMake(x, y, delW, badgeHeight);
+        curX -= delW;
+        if (curX < minX) curX = minX;
+        delBadge.frame = CGRectMake(curX, y, delW, badgeHeight);
         [v bringSubviewToFront:delBadge];
-    } else if (isEdit) {
-        editBadge.layer.cornerRadius = badgeHeight / 2.0;
-        CGFloat x = maxX - editW;
-        if (x < minX) x = minX;
-        editBadge.frame = CGRectMake(x, y, editW, badgeHeight);
-        [v bringSubviewToFront:editBadge];
     }
 }
 
@@ -601,7 +627,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
     UIView *recView = rec.view;
     if (touch && recView) {
         CGPoint loc = [touch locationInView:recView];
-        UIView *btn = [recView viewWithTag:998833] ?: ([recView viewWithTag:998811] ?: ([recView viewWithTag:998855] ?: [recView viewWithTag:998866]));
+        UIView *btn = [recView viewWithTag:998833] ?: ([recView viewWithTag:998811] ?: ([recView viewWithTag:998855] ?: ([recView viewWithTag:998857] ?: [recView viewWithTag:998866])));
         if (btn && !btn.hidden && btn.alpha > 0.05) {
             CGPoint btnLoc = [recView convertPoint:loc toView:btn];
             if ([btn pointInside:btnLoc withEvent:event]) {
@@ -649,6 +675,32 @@ static Class findClassSubstr(const char *suffix) {
     }
     return Nil;
 }
+
+%group ViewOnceGroup
+
+@interface ContextControllerImpl : UIViewController
+@end
+
+%hook ContextControllerImpl
+
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:kAntiSelfDestruct]) {
+        NSString *desc = [self description] ?: @"";
+        id config = nil;
+        @try {
+            config = [self valueForKey:@"configuration"];
+        } @catch (NSException *e) {}
+        NSString *configDesc = config ? [config description] : @"";
+        if ([desc containsString:@"ChatViewOnce"] || [configDesc containsString:@"ChatViewOnce"]) {
+            [self dismissViewControllerAnimated:NO completion:nil];
+        }
+    }
+}
+
+%end
+
+%end
 
 %group SecretMediaGroup
 
@@ -764,6 +816,17 @@ static void hook() {
         }
         if (secretMediaNodeClass) {
             %init(SecretMediaGroup, SecretMediaPreviewControllerNode = secretMediaNodeClass);
+        }
+
+        Class contextControllerClass = objc_getClass("ContextControllerImpl.ContextControllerImpl");
+        if (!contextControllerClass) {
+            contextControllerClass = objc_getClass("_TtC21ContextControllerImpl21ContextControllerImpl");
+        }
+        if (!contextControllerClass) {
+            contextControllerClass = findClassSubstr("ContextControllerImpl");
+        }
+        if (contextControllerClass) {
+            %init(ViewOnceGroup, ContextControllerImpl = contextControllerClass);
         }
 
         Class displayViewClass = objc_getClass("_ASDisplayView");
