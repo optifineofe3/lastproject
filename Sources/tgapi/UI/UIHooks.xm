@@ -86,31 +86,30 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     UIView *v = node.view;
     if (!v) return;
 
+    // Attach single-tap recognizer to message node for showing edit history on tap
+    if (![v viewWithTag:998850]) {
+        UIView *marker = [[UIView alloc] initWithFrame:CGRectZero];
+        marker.tag = 998850;
+        marker.hidden = YES;
+        [v addSubview:marker];
+
+        UITapGestureRecognizer *bubbleTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleBubbleTap:)];
+        bubbleTap.cancelsTouchesInView = NO;
+        bubbleTap.delegate = (id<UIGestureRecognizerDelegate>)[MediaSaver shared];
+        [v addGestureRecognizer:bubbleTap];
+    }
+    objc_setAssociatedObject(v, "TweakMessageNode", node, OBJC_ASSOCIATION_ASSIGN);
+
     NSNumber *msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
     BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
-    BOOL isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
-    NSString *origText = msgId ? [NSClassFromString(@"TLParser") getOriginalTextForId:msgId] : nil;
 
     UILabel *badge = (UILabel *)[v viewWithTag:998855];
     UIView *origView = [v viewWithTag:998866];
+    if (origView) origView.hidden = YES;
 
-    if (!isDel && !isEdit) {
+    if (!isDel) {
         if (badge) badge.hidden = YES;
-        if (origView) origView.hidden = YES;
         return;
-    }
-
-    NSString *badgeText = nil;
-    UIColor *badgeBg = nil;
-    if (isDel && isEdit) {
-        badgeText = @"DEL • EDIT";
-        badgeBg = [UIColor colorWithRed:0.85 green:0.20 blue:0.20 alpha:0.85];
-    } else if (isDel) {
-        badgeText = @"DEL";
-        badgeBg = [UIColor colorWithRed:0.85 green:0.20 blue:0.20 alpha:0.85];
-    } else {
-        badgeText = @"EDIT";
-        badgeBg = [UIColor colorWithRed:0.18 green:0.52 blue:0.92 alpha:0.85];
     }
 
     if (!badge) {
@@ -119,103 +118,33 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         badge.textAlignment = NSTextAlignmentCenter;
         badge.font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
         badge.textColor = [UIColor whiteColor];
+        badge.backgroundColor = [UIColor colorWithRed:0.85 green:0.20 blue:0.20 alpha:0.85];
         badge.layer.masksToBounds = YES;
         badge.layer.zPosition = 1000;
-        badge.userInteractionEnabled = YES;
-
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleEditBadgeTap:)];
-        [badge addGestureRecognizer:tap];
-
+        badge.userInteractionEnabled = NO;
         [v addSubview:badge];
     }
 
-    badge.text = badgeText;
-    badge.backgroundColor = badgeBg;
+    badge.text = @"DEL";
     badge.hidden = NO;
     if (msgId) {
-        objc_setAssociatedObject(badge, "LeadBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(badge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 
     CGRect bFrame = getContentFrameOfNode(node);
-    CGSize textSize = [badgeText sizeWithAttributes:@{NSFontAttributeName: badge.font}];
+    CGSize textSize = [@"DEL" sizeWithAttributes:@{NSFontAttributeName: badge.font}];
     CGFloat badgeWidth = MAX(textSize.width + 10.0, 26.0);
     CGFloat badgeHeight = 15.0;
     badge.layer.cornerRadius = badgeHeight / 2.0;
 
     CGFloat x = CGRectGetMaxX(bFrame) - badgeWidth - 4.0;
-    CGFloat y = CGRectGetMinY(bFrame) + 4.0;
     if (x < CGRectGetMinX(bFrame) + 2.0) {
         x = CGRectGetMinX(bFrame) + 2.0;
     }
+    // Strictly centered vertically on the message bubble:
+    CGFloat y = CGRectGetMinY(bFrame) + (bFrame.size.height - badgeHeight) / 2.0;
     badge.frame = CGRectMake(x, y, badgeWidth, badgeHeight);
     [v bringSubviewToFront:badge];
-
-    // Semi-transparent original message card for edited messages
-    if (isEdit && origText && origText.length > 0) {
-        if (!origView) {
-            origView = [[UIView alloc] init];
-            origView.tag = 998866;
-            origView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.50];
-            origView.layer.cornerRadius = 8.0;
-            origView.layer.masksToBounds = YES;
-            origView.layer.zPosition = 999;
-            origView.alpha = 0.60;
-            origView.userInteractionEnabled = YES;
-
-            UITapGestureRecognizer *origTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleEditBadgeTap:)];
-            [origView addGestureRecognizer:origTap];
-
-            UILabel *headerLbl = [[UILabel alloc] init];
-            headerLbl.tag = 101;
-            headerLbl.font = [UIFont systemFontOfSize:7.5 weight:UIFontWeightBold];
-            headerLbl.textColor = [UIColor colorWithRed:0.75 green:0.88 blue:1.0 alpha:0.95];
-            headerLbl.text = @"ORIGINAL (TAP TO VIEW)";
-            [origView addSubview:headerLbl];
-
-            UILabel *bodyLbl = [[UILabel alloc] init];
-            bodyLbl.tag = 102;
-            bodyLbl.font = [UIFont italicSystemFontOfSize:10.5];
-            bodyLbl.textColor = [UIColor whiteColor];
-            bodyLbl.numberOfLines = 1;
-            bodyLbl.lineBreakMode = NSLineBreakByTruncatingTail;
-            [origView addSubview:bodyLbl];
-
-            [v addSubview:origView];
-        }
-
-        origView.hidden = NO;
-        if (msgId) {
-            objc_setAssociatedObject(origView, "LeadBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-
-        CGFloat maxW = (v.bounds.size.width > 20.0) ? (v.bounds.size.width - 20.0) : 250.0;
-        CGFloat origW = fmin(fmax(bFrame.size.width, 140.0), maxW);
-        CGFloat origH = 26.0;
-        CGFloat origX = CGRectGetMinX(bFrame);
-
-        if (CGRectGetMaxX(bFrame) > v.bounds.size.width / 2.0) {
-            origX = CGRectGetMaxX(bFrame) - origW;
-            if (origX < 8.0) origX = 8.0;
-        } else {
-            if (origX + origW > v.bounds.size.width - 8.0) {
-                origW = v.bounds.size.width - 8.0 - origX;
-            }
-        }
-
-        CGFloat origY = CGRectGetMinY(bFrame) - origH - 2.0;
-        origView.frame = CGRectMake(origX, origY, origW, origH);
-
-        UILabel *headerLbl = (UILabel *)[origView viewWithTag:101];
-        UILabel *bodyLbl = (UILabel *)[origView viewWithTag:102];
-        if (headerLbl) headerLbl.frame = CGRectMake(7, 2, origW - 14, 10);
-        if (bodyLbl) {
-            bodyLbl.frame = CGRectMake(7, 12, origW - 14, 12);
-            bodyLbl.text = origText;
-        }
-        [v bringSubviewToFront:origView];
-    } else {
-        if (origView) origView.hidden = YES;
-    }
 }
 
 static void refreshDeletedBadgesInView(UIView *view) {
@@ -661,6 +590,47 @@ static Class findClassSubstr(const char *suffix) {
     return Nil;
 }
 
+%group SecretMediaGroup
+
+@interface SecretMediaPreviewControllerNode : ASDisplayNode
+@end
+
+%hook SecretMediaPreviewControllerNode
+
+- (void)didLoad {
+    %orig;
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:kAntiSelfDestruct]) {
+        UIView *v = [(ASDisplayNode *)self view];
+        if (v) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                for (UIView *sub in v.subviews) {
+                    if ([NSStringFromClass([sub class]) containsString:@"RadialStatus"]) {
+                        sub.hidden = YES;
+                    }
+                }
+            });
+        }
+    }
+}
+
+- (void)layout {
+    %orig;
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:kAntiSelfDestruct]) {
+        UIView *v = [(ASDisplayNode *)self view];
+        if (v) {
+            for (UIView *sub in v.subviews) {
+                if ([NSStringFromClass([sub class]) containsString:@"RadialStatus"]) {
+                    sub.hidden = YES;
+                }
+            }
+        }
+    }
+}
+
+%end
+
+%end
+
 __attribute__((constructor))
 static void hook() {
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
@@ -671,7 +641,21 @@ static void hook() {
         kAntiEdit: @YES,
     }];
 
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"TweakMessageDeletedRealtime" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
+        (void)note;
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            refreshDeletedBadgesInView(w);
+        }
+    }];
+
     [[NSNotificationCenter defaultCenter] addObserverForName:@"LeadMessageDeletedRealtime" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
+        (void)note;
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            refreshDeletedBadgesInView(w);
+        }
+    }];
+
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"TweakMessageEditedRealtime" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
         (void)note;
         for (UIWindow *w in [UIApplication sharedApplication].windows) {
             refreshDeletedBadgesInView(w);
@@ -712,6 +696,14 @@ static void hook() {
         }
         if (galleryNodeClass) {
             %init(GalleryNodeGroup, GalleryControllerNode = galleryNodeClass);
+        }
+
+        Class secretMediaNodeClass = objc_getClass("GalleryUI.SecretMediaPreviewControllerNode");
+        if (!secretMediaNodeClass) {
+            secretMediaNodeClass = findClassSubstr("SecretMediaPreviewControllerNode");
+        }
+        if (secretMediaNodeClass) {
+            %init(SecretMediaGroup, SecretMediaPreviewControllerNode = secretMediaNodeClass);
         }
 
         Class displayViewClass = objc_getClass("_ASDisplayView");

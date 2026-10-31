@@ -136,7 +136,7 @@ void customLog2(NSString *format, ...) {
     NSData *logData = [logMessage dataUsingEncoding:NSUTF8StringEncoding];
 
     // Always write to Documents — works on non-jb sideload without app group
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/lead_debug.txt"];
+    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/tweak_debug.txt"];
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm fileExistsAtPath:path]) {
         [fm createFileAtPath:path contents:nil attributes:nil];

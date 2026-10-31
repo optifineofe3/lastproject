@@ -387,7 +387,7 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
   if (data && data.length >= 4) {
     int32_t ctor = 0;
     memcpy(&ctor, data.bytes, 4);
-    // customLog2(@"[Lead] parseMessage: len=%lu ctor=0x%08X", (unsigned
+    // customLog2(@"[Tweak] parseMessage: len=%lu ctor=0x%08X", (unsigned
     // long)data.length, (uint32_t)ctor);
 
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -399,7 +399,7 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
       NSData *modifiedData = neutralizePayload(
           data, antiRevoke, antiSelfDestruct);
       if (modifiedData) {
-        customLog2(@"[Lead] parseMessage: NEUTRALIZED (antiRevoke=%d "
+        customLog2(@"[Tweak] parseMessage: NEUTRALIZED (antiRevoke=%d "
                    @"antiSelfDestruct=%d)",
                    antiRevoke, antiSelfDestruct);
         data = modifiedData;
@@ -437,7 +437,7 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
       NSData *strippedData =
           [NSClassFromString(@"TLParser") stripAntiSelfDestruct:uncompressed];
       if (strippedData) {
-        customLog2(@"[Lead] parseMessage: STRIPPED SELF-DESTRUCT");
+        customLog2(@"[Tweak] parseMessage: STRIPPED SELF-DESTRUCT");
         data = strippedData;
         modified = YES;
       }

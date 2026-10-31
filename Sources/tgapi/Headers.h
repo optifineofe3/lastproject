@@ -14,6 +14,7 @@
 + (BOOL)isEdited:(NSNumber *)msgId;
 + (BOOL)isNodeEdited:(id)node;
 + (NSString *)getOriginalTextForId:(NSNumber *)msgId;
++ (NSArray *)getEditHistoryForNode:(id)node;
 + (NSData *)stripAntiSelfDestruct:(NSData *)data;
 + (BOOL)isMessageSelfDestructing:(NSNumber *)msgId;
 + (BOOL)handleForwardRequest:(NSData *)data;

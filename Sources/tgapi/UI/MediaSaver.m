@@ -1104,10 +1104,222 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     });
 }
 
++ (void)showEditHistoryForNode:(id)node bFrame:(CGRect)bFrame msgId:(NSNumber *)msgId {
+    (void)msgId;
+    UIWindow *window = [UIApplication sharedApplication].keyWindow;
+    if (!window) {
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (w.isKeyWindow) { window = w; break; }
+        }
+    }
+    if (!window && [UIApplication sharedApplication].windows.count > 0) {
+        window = [UIApplication sharedApplication].windows.firstObject;
+    }
+    if (!window) return;
+
+    UIView *oldOverlay = [window viewWithTag:998899];
+    if (oldOverlay) {
+        [oldOverlay removeFromSuperview];
+    }
+
+    NSArray *history = [NSClassFromString(@"TLParser") getEditHistoryForNode:node];
+    if (!history || history.count == 0) return;
+
+    UIView *nodeView = nil;
+    if ([node respondsToSelector:@selector(view)]) {
+        SEL selView = @selector(view);
+        NSMethodSignature *sig = [node methodSignatureForSelector:selView];
+        if (sig) {
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:node];
+            [inv setSelector:selView];
+            [inv invoke];
+            void *retVal = NULL;
+            [inv getReturnValue:&retVal];
+            nodeView = (__bridge UIView *)retVal;
+        }
+    }
+    if (!nodeView) return;
+
+    UIView *backdrop = [[UIView alloc] initWithFrame:window.bounds];
+    backdrop.tag = 998899;
+    backdrop.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.35];
+    backdrop.alpha = 0.0;
+    backdrop.userInteractionEnabled = YES;
+
+    UITapGestureRecognizer *dismissTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(dismissEditHistoryOverlay)];
+    [backdrop addGestureRecognizer:dismissTap];
+
+    CGRect bubbleInWindow = [nodeView convertRect:bFrame toView:window];
+    CGFloat screenW = window.bounds.size.width;
+    CGFloat screenH = window.bounds.size.height;
+    CGFloat cardW = MAX(bubbleInWindow.size.width, 240.0);
+    if (cardW > screenW - 24.0) cardW = screenW - 24.0;
+    if (cardW < 220.0) cardW = 220.0;
+
+    CGFloat contentH = 34.0;
+    for (NSDictionary *entry in history) {
+        NSString *txt = entry[@"text"] ?: @"";
+        CGSize s = [txt boundingRectWithSize:CGSizeMake(cardW - 24.0, 300) options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12.5]} context:nil].size;
+        contentH += MAX(s.height, 16.0) + 26.0;
+    }
+    contentH += 10.0;
+    CGFloat maxH = screenH * 0.55;
+    if (contentH > maxH) contentH = maxH;
+
+    CGFloat cardX = bubbleInWindow.origin.x;
+    if (cardX + cardW > screenW - 12.0) cardX = screenW - cardW - 12.0;
+    if (cardX < 12.0) cardX = 12.0;
+
+    CGFloat cardY = bubbleInWindow.origin.y - contentH - 8.0;
+    if (cardY < 60.0) {
+        cardY = CGRectGetMaxY(bubbleInWindow) + 8.0;
+    }
+    if (cardY + contentH > screenH - 40.0) {
+        cardY = screenH - contentH - 40.0;
+    }
+
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterialDark];
+    UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:blur];
+    card.frame = CGRectMake(cardX, cardY, cardW, contentH);
+    card.layer.cornerRadius = 14.0;
+    card.layer.masksToBounds = YES;
+    card.layer.borderWidth = 0.5;
+    card.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
+    card.transform = CGAffineTransformMakeScale(0.92, 0.92);
+
+    UILabel *header = [[UILabel alloc] initWithFrame:CGRectMake(12, 9, cardW - 24, 16)];
+    header.font = [UIFont systemFontOfSize:10.5 weight:UIFontWeightBold];
+    header.textColor = [UIColor colorWithRed:0.40 green:0.75 blue:1.0 alpha:1.0];
+    header.text = @"✏️ ИСТОРИЯ ИЗМЕНЕНИЙ";
+    [card.contentView addSubview:header];
+
+    UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 28, cardW, contentH - 28)];
+    scrollView.showsVerticalScrollIndicator = YES;
+    scrollView.alwaysBounceVertical = NO;
+
+    CGFloat currY = 4.0;
+    for (NSDictionary *entry in history) {
+        NSString *badgeStr = entry[@"badge"] ?: @"";
+        NSString *labelStr = entry[@"label"] ?: @"";
+        NSString *bodyStr = entry[@"text"] ?: @"";
+
+        UILabel *badgeLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, currY, cardW - 24, 14)];
+        badgeLbl.font = [UIFont monospacedDigitSystemFontOfSize:11.0 weight:UIFontWeightBold];
+        badgeLbl.textColor = [UIColor colorWithRed:0.55 green:0.85 blue:1.0 alpha:1.0];
+        badgeLbl.text = [NSString stringWithFormat:@"%@  %@", badgeStr, labelStr];
+        [scrollView addSubview:badgeLbl];
+        currY += 16.0;
+
+        CGSize bodySize = [bodyStr boundingRectWithSize:CGSizeMake(cardW - 24.0, 300) options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12.5]} context:nil].size;
+        CGFloat textH = MAX(bodySize.height, 16.0);
+
+        UILabel *bodyLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, currY, cardW - 24, textH)];
+        bodyLbl.font = [UIFont systemFontOfSize:12.5];
+        bodyLbl.textColor = [UIColor whiteColor];
+        bodyLbl.numberOfLines = 0;
+        bodyLbl.text = bodyStr;
+        bodyLbl.userInteractionEnabled = YES;
+
+        UITapGestureRecognizer *rowTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleHistoryCopyTap:)];
+        objc_setAssociatedObject(rowTap, "TweakCopyText", bodyStr, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [bodyLbl addGestureRecognizer:rowTap];
+
+        [scrollView addSubview:bodyLbl];
+        currY += textH + 10.0;
+    }
+    scrollView.contentSize = CGSizeMake(cardW, currY);
+    [card.contentView addSubview:scrollView];
+
+    [backdrop addSubview:card];
+    [window addSubview:backdrop];
+
+    [UIView animateWithDuration:0.25 delay:0.0 usingSpringWithDamping:0.85 initialSpringVelocity:0.5 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        backdrop.alpha = 1.0;
+        card.transform = CGAffineTransformIdentity;
+    } completion:nil];
+}
+
+- (void)handleHistoryCopyTap:(UITapGestureRecognizer *)gesture {
+    NSString *txt = objc_getAssociatedObject(gesture, "TweakCopyText");
+    if (txt && txt.length > 0) {
+        [UIPasteboard generalPasteboard].string = txt;
+        [MediaSaver showToast:@"Текст скопирован!" success:YES];
+    }
+}
+
+- (void)dismissEditHistoryOverlay {
+    UIWindow *window = [UIApplication sharedApplication].keyWindow;
+    if (!window) {
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (w.isKeyWindow) { window = w; break; }
+        }
+    }
+    if (!window && [UIApplication sharedApplication].windows.count > 0) {
+        window = [UIApplication sharedApplication].windows.firstObject;
+    }
+    UIView *overlay = [window viewWithTag:998899];
+    if (overlay) {
+        [UIView animateWithDuration:0.20 animations:^{
+            overlay.alpha = 0.0;
+        } completion:^(BOOL finished) {
+            (void)finished;
+            [overlay removeFromSuperview];
+        }];
+    }
+}
+
+- (void)handleBubbleTap:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateEnded) return;
+    UIView *v = gesture.view;
+    if (!v) return;
+
+    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    if (keyWindow && [keyWindow viewWithTag:998899]) {
+        [self dismissEditHistoryOverlay];
+        return;
+    }
+
+    id node = objc_getAssociatedObject(v, "TweakMessageNode");
+    if (!node) return;
+
+    BOOL isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
+    if (!isEdit) return;
+
+    NSNumber *msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
+
+    CGRect bFrame = CGRectZero;
+    SEL sel = @selector(contentFrame);
+    if ([node respondsToSelector:sel]) {
+        NSMethodSignature *sig = [node methodSignatureForSelector:sel];
+        if (sig && strcmp([sig methodReturnType], @encode(CGRect)) == 0) {
+            NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+            [inv setTarget:node];
+            [inv setSelector:sel];
+            [inv invoke];
+            [inv getReturnValue:&bFrame];
+        }
+    }
+    if (CGRectIsEmpty(bFrame)) {
+        bFrame = v.bounds;
+    }
+
+    CGPoint loc = [gesture locationInView:v];
+    if (CGRectContainsPoint(bFrame, loc)) {
+        [MediaSaver showEditHistoryForNode:node bFrame:bFrame msgId:msgId];
+    }
+}
+
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherGestureRecognizer {
+    (void)gestureRecognizer;
+    (void)otherGestureRecognizer;
+    return YES;
+}
+
 - (void)handleEditBadgeTap:(UITapGestureRecognizer *)gesture {
     UIView *badge = gesture.view;
     if (!badge) return;
-    NSNumber *msgId = objc_getAssociatedObject(badge, "LeadBadgeMsgId");
+    NSNumber *msgId = objc_getAssociatedObject(badge, "TweakBadgeMsgId") ?: objc_getAssociatedObject(badge, "LeadBadgeMsgId");
     if (!msgId) return;
     NSString *origText = [NSClassFromString(@"TLParser") getOriginalTextForId:msgId];
     if (!origText || origText.length == 0) {

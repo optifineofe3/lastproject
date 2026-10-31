@@ -170,6 +170,7 @@ class TLParser: NSObject {
         }
 
         DispatchQueue.main.async {
+            NotificationCenter.default.post(name: NSNotification.Name("TweakMessageEditedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
             NotificationCenter.default.post(name: NSNotification.Name("LeadMessageEditedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
         }
     }
@@ -186,27 +187,130 @@ class TLParser: NSObject {
         }
     }
 
+    private static func inspectNode(_ node: Any, editDate: inout Int32?, origDate: inout Int32?, currentText: inout String?) {
+        var currentMirror: Mirror? = Mirror(reflecting: node)
+        while let mirror = currentMirror {
+            for child in mirror.children {
+                if child.label == "item" {
+                    inspectAnyItem(child.value, editDate: &editDate, origDate: &origDate, currentText: &currentText)
+                }
+            }
+            currentMirror = mirror.superclassMirror
+        }
+    }
+
+    private static func inspectAnyItem(_ val: Any, editDate: inout Int32?, origDate: inout Int32?, currentText: inout String?) {
+        let mirror = Mirror(reflecting: val)
+        for child in mirror.children {
+            let label = child.label ?? ""
+            if label == "text", let t = child.value as? String {
+                if currentText == nil { currentText = t }
+            } else if label == "timestamp", let ts = child.value as? Int32 {
+                if origDate == nil { origDate = ts }
+            } else if label == "attributes", let attrs = child.value as? [Any] {
+                for attr in attrs {
+                    let attrDesc = String(describing: type(of: attr))
+                    if attrDesc.contains("EditedMessageAttribute") {
+                        let attrMirror = Mirror(reflecting: attr)
+                        for ac in attrMirror.children {
+                            if ac.label == "date", let d = ac.value as? Int32 {
+                                editDate = d
+                            }
+                        }
+                    }
+                }
+            } else if label == "message" || label == "firstMessage" || label == "content" {
+                inspectAnyItem(child.value, editDate: &editDate, origDate: &origDate, currentText: &currentText)
+            }
+        }
+    }
+
     @objc static func isNodeEdited(_ node: Any) -> Bool {
         if let msgId = getMessageIdFromNode(node) {
             if isEdited(msgId) { return true }
+        }
+        var editDate: Int32?
+        var origDate: Int32?
+        var currentText: String?
+        inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText)
+        if editDate != nil {
+            if let msgId = getMessageIdFromNode(node) {
+                recordEditedMessage(id: msgId.int32Value, newText: currentText ?? "")
+            }
+            return true
         }
         let nodeDesc = String(describing: node)
         if nodeDesc.contains("EditedMessageAttribute") {
             return true
         }
-        var currentMirror: Mirror? = Mirror(reflecting: node)
-        while let mirror = currentMirror {
-            for child in mirror.children {
-                if child.label == "item" {
-                    let itemDesc = String(describing: child.value)
-                    if itemDesc.contains("EditedMessageAttribute") {
-                        return true
-                    }
-                }
-            }
-            currentMirror = mirror.superclassMirror
-        }
         return false
+    }
+
+    @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
+        guard let msgId = getMessageIdFromNode(node) else { return [] }
+        let id = msgId.int32Value
+        
+        var editDate: Int32?
+        var origDate: Int32?
+        var currentText: String?
+        inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText)
+        
+        let df = DateFormatter()
+        df.dateFormat = "HH:mm:ss"
+        
+        var list: [[String: Any]] = []
+        
+        var origText: String?
+        editedTextsQueue.sync {
+            origText = _editedOriginalTexts[id]
+        }
+        if origText == nil {
+            origTextsQueue.sync {
+                origText = _originalTexts[id]
+            }
+        }
+
+        if editDate == nil, let cur = currentText, !cur.isEmpty {
+            recordOriginalMessage(id: id, text: cur)
+        }
+        
+        func formatBadge(_ ts: Int32?) -> String {
+            if let t = ts, t > 0 {
+                let d = Date(timeIntervalSince1970: TimeInterval(t))
+                return "[\(df.string(from: d))]"
+            }
+            return "[\(df.string(from: Date()))]"
+        }
+        
+        if let original = origText, !original.isEmpty {
+            let origTimeStr = formatBadge(origDate ?? (editDate != nil ? (editDate! - 60) : nil))
+            list.append([
+                "badge": origTimeStr,
+                "label": "Исходное сообщение",
+                "text": original,
+                "isOriginal": true
+            ])
+            
+            if let cur = currentText, !cur.isEmpty, cur != original {
+                let editTimeStr = formatBadge(editDate)
+                list.append([
+                    "badge": editTimeStr,
+                    "label": "Текущий текст",
+                    "text": cur,
+                    "isOriginal": false
+                ])
+            }
+        } else {
+            let editTimeStr = formatBadge(editDate)
+            list.append([
+                "badge": editTimeStr,
+                "label": "Отредактировано",
+                "text": currentText ?? "(Текст был изменён до кэширования твиком)",
+                "isOriginal": false
+            ])
+        }
+        
+        return list as NSArray
     }
 
     @objc static func getOriginalTextForId(_ msgId: NSNumber) -> NSString? {
@@ -563,23 +667,27 @@ class TLParser: NSObject {
         return UserDefaults.standard.bool(forKey: "LeadAntiRevoke")
     }
 
-    private static func stripTTLMedia(_ media: Api.MessageMedia, messageId: Int32) -> Api.MessageMedia {
-        guard isAntiSelfDestructActive else { return media }
+    private static func stripTTLMedia(_ media: Api.MessageMedia, messageId: Int32) -> (Api.MessageMedia, Bool) {
+        guard isAntiSelfDestructActive else { return (media, false) }
         switch media {
         case let .messageMediaPhoto(data):
-            if data.ttlSeconds != nil || (Int(data.flags) & Int(1 << 2)) != 0 {
+            let hasTTL = data.ttlSeconds != nil || (Int(data.flags) & Int(1 << 2)) != 0
+            if hasTTL {
                 addSelfDestructingId(messageId)
             }
-            // Clear ttlSeconds (bit 2) and spoiler (bit 3) and media_unread (bit 5) just in case
-            return .messageMediaPhoto(Api.MessageMedia.Cons_messageMediaPhoto(flags: data.flags & ~(1 << 2) & ~(1 << 3) & ~(1 << 5), photo: data.photo, ttlSeconds: nil, video: data.video))
+            let newFlags = data.flags & ~(1 << 2) & ~(1 << 3) & ~(1 << 5)
+            let changed = (newFlags != data.flags) || (data.ttlSeconds != nil)
+            return (.messageMediaPhoto(Api.MessageMedia.Cons_messageMediaPhoto(flags: newFlags, photo: data.photo, ttlSeconds: nil, video: data.video)), changed)
         case let .messageMediaDocument(data):
-            if data.ttlSeconds != nil || (Int(data.flags) & Int(1 << 2)) != 0 {
+            let hasTTL = data.ttlSeconds != nil || (Int(data.flags) & Int(1 << 2)) != 0
+            if hasTTL {
                 addSelfDestructingId(messageId)
             }
-            // Clear ttlSeconds (bit 2) and spoiler (bit 3) and video stuff
-            return .messageMediaDocument(Api.MessageMedia.Cons_messageMediaDocument(flags: data.flags & ~(1 << 2) & ~(1 << 3), document: data.document, altDocuments: data.altDocuments, videoCover: data.videoCover, videoTimestamp: data.videoTimestamp, ttlSeconds: nil))
+            let newFlags = data.flags & ~(1 << 2) & ~(1 << 3)
+            let changed = (newFlags != data.flags) || (data.ttlSeconds != nil)
+            return (.messageMediaDocument(Api.MessageMedia.Cons_messageMediaDocument(flags: newFlags, document: data.document, altDocuments: data.altDocuments, videoCover: data.videoCover, videoTimestamp: data.videoTimestamp, ttlSeconds: nil)), changed)
         default:
-            return media
+            return (media, false)
         }
     }
 
@@ -774,7 +882,12 @@ class TLParser: NSObject {
             addSelfDestructingId(data.id)
         }
 
-        let newMedia = data.media.map { stripTTLMedia($0, messageId: data.id) }
+        var mediaChanged = false
+        let newMedia = data.media.map { media -> Api.MessageMedia in
+            let (stripped, changed) = stripTTLMedia(media, messageId: data.id)
+            if changed { mediaChanged = true }
+            return stripped
+        }
         
         let isMediaDestructing = selfDestructingMessageIds.contains(data.id)
         let shouldStripFlags = isDestructing || isMediaDestructing
@@ -798,6 +911,7 @@ class TLParser: NSObject {
             newFlags |= (1 << 7)
         }
         
+        let ttlChanged = (data.ttlPeriod != nil && shouldStripFlags)
         let resultMsg = Api.Message.message(Api.Message.Cons_message(
             flags: newFlags, flags2: newFlags2, id: data.id, fromId: data.fromId,
             fromBoostsApplied: data.fromBoostsApplied, fromRank: data.fromRank, peerId: data.peerId,
@@ -818,7 +932,12 @@ class TLParser: NSObject {
             summaryFromLanguage: data.summaryFromLanguage
         ))
         
-        let modified = (newFlags != data.flags) || (newMessageText != data.message) || (newEntities?.count != data.entities?.count) || (newFlags2 != data.flags2)
+        let modified = (newFlags != data.flags) || 
+                       (newMessageText != data.message) || 
+                       (newEntities?.count != data.entities?.count) || 
+                       (newFlags2 != data.flags2) || 
+                       ttlChanged || 
+                       mediaChanged
         
         return (resultMsg, modified)
     }
@@ -1027,11 +1146,16 @@ class TLParser: NSObject {
                     modified = true
                 }
             case let .updateShortSentMessage(data):
-                let newMedia = data.media.map { stripTTLMedia($0, messageId: data.id) }
+                var mediaChanged = false
+                let newMedia = data.media.map { media -> Api.MessageMedia in
+                    let (stripped, changed) = stripTTLMedia(media, messageId: data.id)
+                    if changed { mediaChanged = true }
+                    return stripped
+                }
                 let isMediaDestructing = selfDestructingMessageIds.contains(data.id) || data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0
                 let newFlags = isMediaDestructing ? (data.flags & ~(1 << 25) & ~(1 << 5)) : data.flags
                 
-                if newFlags != data.flags || isMediaDestructing {
+                if newFlags != data.flags || isMediaDestructing || mediaChanged {
                     newResult = Api.Updates.updateShortSentMessage(Api.Updates.Cons_updateShortSentMessage(flags: newFlags, id: data.id, pts: data.pts, ptsCount: data.ptsCount, date: data.date, media: newMedia, entities: data.entities, ttlPeriod: isMediaDestructing ? nil : data.ttlPeriod))
                     modified = true
                 }

@@ -1,6 +1,10 @@
 #import <UIKit/UIKit.h>
 
-@interface MediaSaver : NSObject
+@interface MediaSaver : NSObject <UIGestureRecognizerDelegate>
+
++ (void)showEditHistoryForNode:(id)node bFrame:(CGRect)bFrame msgId:(NSNumber *)msgId;
+- (void)dismissEditHistoryOverlay;
+- (void)handleBubbleTap:(UITapGestureRecognizer *)gesture;
 
 + (instancetype)shared;
 + (void)attachToController:(UIViewController *)controller;
