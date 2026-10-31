@@ -13,6 +13,7 @@
 // upload.getFile#be5335be / upload.getCdnFile#2000bcc3 — file chunk downloads
 #define kUploadGetFile      -1101843010
 #define kUploadGetCdnFile   -1691921240
+#define kGzipPackedCtor     ((int32_t)0x3072CFA1)
 
 #define kActionIDTyping 381645902           // .sendMessageTypingAction
 #define kActionIDRecordingVideo -1584933265 // .sendMessageRecordVideoAction

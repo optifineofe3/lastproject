@@ -6,6 +6,8 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
                                  BOOL antiSelfDestruct);
 
 #define kChannelsReadHistory -871347913
+#define kGzipPackedCtor ((int32_t)0x3072CFA1)
+
 
 %hook MTRequest %property(nonatomic, strong) NSData *fakeData;
 %property(nonatomic, strong) NSNumber *functionID;
@@ -202,7 +204,7 @@ extern void setLayerDisableScreenshots(CALayer *layer, bool disableScreenshots);
 #define kDummyConstructor 0x00000001
 
 // gzip_packed#3072cfa1 — Telegram wraps large updates in gzip to save bandwidth
-#define kGzipPackedCtor ((int32_t)0x3072CFA1)
+// kGzipPackedCtor defined above
 
     // ============================================================
     // decompressGzip — inflate a raw gzip/zlib byte stream.
