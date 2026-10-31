@@ -149,6 +149,11 @@ void customLog2(NSString *format, ...) {
     }
 }
 
+void customLogMsg(NSString *msg) {
+    if (!msg) return;
+    customLog2(@"%@", msg);
+}
+
 NSData *decompressGzip(const void *input, size_t inputLen) {
     if (!input || inputLen < 2) return nil;
 

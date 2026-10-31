@@ -168,15 +168,24 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     CGFloat badgeHeight = 15.0;
     CGFloat y = CGRectGetMinY(bFrame) + (bFrame.size.height - badgeHeight) / 2.0;
 
+    CGFloat maxX = CGRectGetMaxX(bFrame) - 4.0;
+    CGFloat minX = CGRectGetMinX(bFrame) + 2.0;
+
     UIFont *font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
     CGSize delSize = [@"DEL" sizeWithAttributes:@{NSFontAttributeName: font}];
     CGFloat delW = MAX(delSize.width + 10.0, 26.0);
 
-    CGSize editSize = [@"EDITED" sizeWithAttributes:@{NSFontAttributeName: font}];
-    CGFloat editW = MAX(editSize.width + 10.0, 42.0);
+    BOOL isLarge = (bFrame.size.height >= 44.0 || bFrame.size.width >= 200.0);
+    if (isDel && isEdit && (maxX - minX < 120.0)) {
+        isLarge = YES;
+    }
+    NSString *editText = isLarge ? @"EDT" : @"EDITED";
+    if (editBadge) {
+        editBadge.text = editText;
+    }
 
-    CGFloat maxX = CGRectGetMaxX(bFrame) - 4.0;
-    CGFloat minX = CGRectGetMinX(bFrame) + 2.0;
+    CGSize editSize = [editText sizeWithAttributes:@{NSFontAttributeName: font}];
+    CGFloat editW = MAX(editSize.width + 8.0, isLarge ? 26.0 : 42.0);
 
     if (isDel && isEdit) {
         delBadge.layer.cornerRadius = badgeHeight / 2.0;

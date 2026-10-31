@@ -1898,15 +1898,23 @@ class TLParser: NSObject {
     }
 
     @objc static func findMediaFilePath(fromTarget target: Any?) -> String? {
-        guard let target = target else { return nil }
+        guard let target = target else {
+            customLogMsg("[TLParser] findMediaFilePath: target is nil")
+            return nil
+        }
+
+        let targetCls = String(describing: type(of: target))
+        customLogMsg("[TLParser] findMediaFilePath: inspecting target of type \(targetCls)")
 
         var objectsToInspect: [Any] = []
 
         if let vc = target as? UIViewController {
             if let central = findCentralItemNode(from: vc) {
                 let cCls = String(describing: type(of: central))
+                customLogMsg("[TLParser] found centralItemNode: \(cCls)")
                 // If user is looking at a photo item, do not resolve any video
                 if cCls.contains("Image") || cCls.contains("Photo") {
+                    customLogMsg("[TLParser] central is Image/Photo, skipping video search")
                     return nil
                 }
                 objectsToInspect.append(central)
@@ -1936,8 +1944,8 @@ class TLParser: NSObject {
             objectsToInspect.append(view)
             collectNodesAndViews(from: view, into: &objectsToInspect)
         } else {
-            let targetCls = String(describing: type(of: target))
             if targetCls.contains("Image") || targetCls.contains("Photo") {
+                customLogMsg("[TLParser] target is Image/Photo, skipping")
                 return nil
             }
             objectsToInspect.append(target)
@@ -1969,9 +1977,12 @@ class TLParser: NSObject {
         var tempPaths: [String] = []
         var visited = Set<ObjectIdentifier>()
 
+        customLogMsg("[TLParser] objectsToInspect count: \(objectsToInspect.count)")
         for obj in objectsToInspect {
-            extractMediaInfo(from: obj, visited: &visited, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
+            extractMediaInfo(from: obj, visited: &visited, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths, depth: 0)
         }
+
+        customLogMsg("[TLParser] extracted fileIds: \(fileIds), uniqueIds: \(uniqueIds), tempPaths: \(tempPaths)")
 
         let fm = FileManager.default
 
@@ -1980,11 +1991,13 @@ class TLParser: NSObject {
             if fm.fileExists(atPath: path),
                let attrs = try? fm.attributesOfItem(atPath: path),
                let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+                customLogMsg("[TLParser] matched tempPath: \(path) (size: \(size))")
                 return path
             }
         }
 
         let folders = collectMediaFolders()
+        customLogMsg("[TLParser] scanning \(folders.count) media folders")
 
         // 2. Check exact uniqueIds in storage folders
         for folder in folders {
@@ -1993,12 +2006,14 @@ class TLParser: NSObject {
                 if fm.fileExists(atPath: complete),
                    let attrs = try? fm.attributesOfItem(atPath: complete),
                    let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+                    customLogMsg("[TLParser] matched complete uniqueId file: \(complete) (size: \(size))")
                     return complete
                 }
                 let partial = (folder as NSString).appendingPathComponent("\(uid)_partial")
                 if fm.fileExists(atPath: partial),
                    let attrs = try? fm.attributesOfItem(atPath: partial),
                    let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+                    customLogMsg("[TLParser] matched partial uniqueId file: \(partial) (size: \(size))")
                     return partial
                 }
             }
@@ -2021,6 +2036,7 @@ class TLParser: NSObject {
                             let nonPartial = String(item.dropLast(8))
                             let nonPartialFull = (folder as NSString).appendingPathComponent(nonPartial)
                             if fm.fileExists(atPath: nonPartialFull) {
+                                customLogMsg("[TLParser] matched non-partial file from partial fid: \(nonPartialFull) (size: \(size))")
                                 return nonPartialFull
                             }
                             if partialCandidate == nil {
@@ -2028,16 +2044,19 @@ class TLParser: NSObject {
                             }
                         } else {
                             // Non-partial complete file!
+                            customLogMsg("[TLParser] matched complete file for fid \(fidStr): \(full) (size: \(size))")
                             return full
                         }
                     }
                 }
                 if let candidate = partialCandidate {
+                    customLogMsg("[TLParser] matched partial candidate for fid \(fidStr): \(candidate)")
                     return candidate
                 }
             }
         }
 
+        customLogMsg("[TLParser] findMediaFilePath: no match found")
         return nil
     }
 
@@ -2051,7 +2070,9 @@ class TLParser: NSObject {
         }
     }
 
-    private static func extractMediaInfo(from obj: Any, visited: inout Set<ObjectIdentifier>, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String]) {
+    private static func extractMediaInfo(from obj: Any, visited: inout Set<ObjectIdentifier>, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String], depth: Int = 0) {
+        if depth > 12 { return }
+
         if type(of: obj) is AnyClass {
             let id = ObjectIdentifier(obj as AnyObject)
             if visited.contains(id) { return }
@@ -2062,11 +2083,12 @@ class TLParser: NSObject {
         parseIdentifiers(fromText: desc, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
 
         var currentMirror: Mirror? = Mirror(reflecting: obj)
-        var depth = 0
-        while let mirror = currentMirror, depth < 5 {
-            depth += 1
+        var mirrorDepth = 0
+        while let mirror = currentMirror, mirrorDepth < 5 {
+            mirrorDepth += 1
             for child in mirror.children {
-                guard let label = child.label else { continue }
+                let label = child.label ?? ""
+
                 if label == "tempFilePath", let path = child.value as? String, !path.isEmpty {
                     if !tempPaths.contains(path) { tempPaths.append(path) }
                 } else if label == "fileId" {
@@ -2078,40 +2100,67 @@ class TLParser: NSObject {
                     } else {
                         let idMirror = Mirror(reflecting: child.value)
                         for idChild in idMirror.children {
-                            if idChild.label == "id", let idVal = idChild.value as? Int64, idVal != 0 {
+                            if (idChild.label == "id" || idChild.label == nil), let idVal = idChild.value as? Int64, idVal != 0 {
                                 if !fileIds.contains(idVal) { fileIds.append(idVal) }
                             }
                         }
                     }
-                } else if label == "id", let idVal = child.value as? Int64, idVal > 1000000000 {
+                } else if (label == "id" || label == "documentId"), let idVal = child.value as? Int64, idVal > 1000000 {
                     if !fileIds.contains(idVal) { fileIds.append(idVal) }
-                } else if ["media", "fileReference", "resource", "content", "videoNode", "contentNode", "item", "entry", "message", "currentMessageMedia", "currentMessageMetadataMedia", "component", "slice", "storyItem", "effectivePeer", "visibleItems"].contains(label) {
-                    let subDesc = String(describing: child.value)
-                    parseIdentifiers(fromText: subDesc, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
-                    extractMediaInfo(from: child.value, visited: &visited, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
+                } else if (label == "id" || label == "stringRepresentation" || label == "uniqueId"), let strVal = child.value as? String, !strVal.isEmpty {
+                    if !uniqueIds.contains(strVal) { uniqueIds.append(strVal) }
+                } else if let strVal = child.value as? String, (strVal.hasPrefix("telegram-") || strVal.hasPrefix("local-") || strVal.hasPrefix("secret-")) {
+                    if !uniqueIds.contains(strVal) { uniqueIds.append(strVal) }
                 }
+
+                // Skip primitives to avoid useless reflection
+                let childVal = child.value
+                let childType = type(of: childVal)
+                if childType is Int.Type || childType is Int32.Type || childType is Int64.Type ||
+                   childType is UInt.Type || childType is UInt32.Type || childType is UInt64.Type ||
+                   childType is Bool.Type || childType is Double.Type || childType is Float.Type ||
+                   childType is CGFloat.Type || childType is String.Type {
+                    continue
+                }
+                // Avoid recursing deep into arbitrary UIViews
+                if childVal is UIView && depth > 2 {
+                    continue
+                }
+
+                extractMediaInfo(from: childVal, visited: &visited, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths, depth: depth + 1)
             }
             currentMirror = mirror.superclassMirror
         }
     }
 
     private static func parseIdentifiers(fromText text: String, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String]) {
-        // 1. telegram-cloud-document-DC-FILEID
-        if let regex = try? NSRegularExpression(pattern: "telegram-cloud-document-(\\d+)-(\\d+)", options: []) {
+        if text.isEmpty { return }
+
+        // 1. Any telegram resource ID: telegram-cloud-document-X-Y, telegram-cloud-file-..., telegram-local-file-..., secret-file-...
+        if let regex = try? NSRegularExpression(pattern: "((?:telegram-)?[a-zA-Z0-9_-]+-[0-9a-zA-Z_\\.-]+)", options: []) {
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
             for match in regex.matches(in: text, options: [], range: nsRange) {
-                if let fullRange = Range(match.range(at: 0), in: text) {
+                if let fullRange = Range(match.range(at: 1), in: text) {
                     let uid = String(text[fullRange])
-                    if !uniqueIds.contains(uid) { uniqueIds.append(uid) }
+                    if uid.hasPrefix("telegram-") || uid.hasPrefix("local-") || uid.hasPrefix("secret-") {
+                        if !uniqueIds.contains(uid) { uniqueIds.append(uid) }
+                    }
                 }
+            }
+        }
+
+        // 2. Specific telegram-cloud-document-DC-FILEID extraction of fileId
+        if let regex = try? NSRegularExpression(pattern: "telegram-cloud-(?:document|file)-(\\d+)-(\\d+)", options: []) {
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            for match in regex.matches(in: text, options: [], range: nsRange) {
                 if let idRange = Range(match.range(at: 2), in: text), let fid = Int64(text[idRange]) {
                     if !fileIds.contains(fid) { fileIds.append(fid) }
                 }
             }
         }
 
-        // 2. fileId: 1234567890123456
-        if let regex = try? NSRegularExpression(pattern: "fileId:\\s*(\\d{10,22})", options: []) {
+        // 3. fileId: 1234567890123456 or documentId: 1234567890123456
+        if let regex = try? NSRegularExpression(pattern: "(?:fileId|documentId):\\s*(\\d{7,22})", options: []) {
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
             for match in regex.matches(in: text, options: [], range: nsRange) {
                 if let idRange = Range(match.range(at: 1), in: text), let fid = Int64(text[idRange]) {
@@ -2120,8 +2169,8 @@ class TLParser: NSObject {
             }
         }
 
-        // 3. MediaId(namespace: X, id: Y)
-        if let regex = try? NSRegularExpression(pattern: "MediaId\\([^\\)]*?id:\\s*(\\d{10,22})", options: []) {
+        // 4. MediaId(namespace: X, id: Y)
+        if let regex = try? NSRegularExpression(pattern: "MediaId\\([^\\)]*?id:\\s*(\\d{7,22})", options: []) {
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
             for match in regex.matches(in: text, options: [], range: nsRange) {
                 if let idRange = Range(match.range(at: 1), in: text), let fid = Int64(text[idRange]) {
@@ -2130,8 +2179,17 @@ class TLParser: NSObject {
             }
         }
 
-        // 4. tempFilePath: "..."
+        // 5. tempFilePath: "..." or file path ending in .mp4/.mov
         if let regex = try? NSRegularExpression(pattern: "tempFilePath:[^\"\\n]*?\"([^\"]+)\"", options: []) {
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            for match in regex.matches(in: text, options: [], range: nsRange) {
+                if let pathRange = Range(match.range(at: 1), in: text) {
+                    let p = String(text[pathRange])
+                    if !tempPaths.contains(p) { tempPaths.append(p) }
+                }
+            }
+        }
+        if let regex = try? NSRegularExpression(pattern: "\"(/[^\"]+?\\.(?:mp4|mov|m4v))\"", options: []) {
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
             for match in regex.matches(in: text, options: [], range: nsRange) {
                 if let pathRange = Range(match.range(at: 1), in: text) {
@@ -2168,6 +2226,9 @@ class TLParser: NSObject {
 
         if let caches = NSSearchPathForDirectoriesInDomains(.cachesDirectory, .userDomainMask, true).first {
             roots.append((caches as NSString).appendingPathComponent("telegram-data"))
+            folders.append(caches)
+            let mediaCache = (caches as NSString).appendingPathComponent("mediacache")
+            if fm.fileExists(atPath: mediaCache) { folders.append(mediaCache) }
         }
         if let appSupport = NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory, .userDomainMask, true).first {
             roots.append((appSupport as NSString).appendingPathComponent("telegram-data"))
@@ -2194,9 +2255,16 @@ class TLParser: NSObject {
                     let media = (((root as NSString).appendingPathComponent(acc) as NSString).appendingPathComponent("postbox") as NSString).appendingPathComponent("media")
                     if fm.fileExists(atPath: media) {
                         folders.append(media)
-                        folders.append((media as NSString).appendingPathComponent("cache"))
-                        folders.append((media as NSString).appendingPathComponent("short-cache"))
-                        folders.append((media as NSString).appendingPathComponent("animation-cache"))
+                        // Scan all subdirectories in media/ (storage, cache-storage, cache, short-cache, etc.)
+                        if let mediaSubs = try? fm.contentsOfDirectory(atPath: media) {
+                            for mSub in mediaSubs {
+                                let subPath = (media as NSString).appendingPathComponent(mSub)
+                                var isDir: ObjCBool = false
+                                if fm.fileExists(atPath: subPath, isDirectory: &isDir), isDir.boolValue {
+                                    folders.append(subPath)
+                                }
+                            }
+                        }
                     }
                 }
             }

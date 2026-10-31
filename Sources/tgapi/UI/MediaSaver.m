@@ -2,6 +2,7 @@
 #import "../Headers.h"
 #import "Headers.h"
 #import "../fishhook/fishhook.h"
+#import "../Logger/Logger.h"
 #import <Photos/Photos.h>
 #import <AVFoundation/AVFoundation.h>
 #import <objc/runtime.h>
@@ -1077,6 +1078,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     if (!target) return nil;
     
     NSString *targetCls = NSStringFromClass([target class]);
+    customLog2(@"[MediaSaver] findVideoPathForTarget: %@", targetCls);
     if ([targetCls containsString:@"Image"] || [targetCls containsString:@"Photo"]) {
         return nil;
     }
@@ -1084,6 +1086,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     // If target is a UIViewController and it is not displaying a video (e.g. photo is viewed), do not look for video!
     if ([target isKindOfClass:[UIViewController class]]) {
         if (!isControllerDisplayingVideo((UIViewController *)target)) {
+            customLog2(@"[MediaSaver] controller is not displaying video");
             return nil;
         }
     }
@@ -1095,6 +1098,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     if (parserCls && [parserCls respondsToSelector:@selector(findMediaFilePathFromTarget:)]) {
         NSString *path = [parserCls findMediaFilePathFromTarget:target];
         if (path && [fm fileExistsAtPath:path]) {
+            customLog2(@"[MediaSaver] TLParser found path: %@", path);
             return path;
         }
     }
@@ -1114,6 +1118,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     if (view) {
         NSString *playerPath = extractPathFromPlayerLayer(view.layer);
         if (playerPath && [fm fileExistsAtPath:playerPath]) {
+            customLog2(@"[MediaSaver] PlayerLayer found path: %@", playerPath);
             return playerPath;
         }
     }
@@ -1121,6 +1126,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     // For gallery items/controllers, never fall back to old played videos from other pages!
     BOOL isGallery = [targetCls containsString:@"GalleryItemNode"] || [targetCls containsString:@"GalleryController"];
     if (isGallery) {
+        customLog2(@"[MediaSaver] Target is gallery, skipping global fallbacks");
         return nil;
     }
     
@@ -1136,6 +1142,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         if ([fm fileExistsAtPath:active]) {
             NSDictionary *attrs = [fm attributesOfItemAtPath:active error:nil];
             if (attrs && [attrs fileSize] >= 40 * 1024) {
+                customLog2(@"[MediaSaver] Active video found: %@", active);
                 return active;
             }
         }
@@ -1149,9 +1156,11 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
                 recent = complete;
             }
         }
+        customLog2(@"[MediaSaver] Recent video found: %@", recent);
         return recent;
     }
     
+    customLog2(@"[MediaSaver] findVideoPathForTarget: no video path found for %@", targetCls);
     return nil;
 }
 
@@ -1242,14 +1251,19 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 + (void)startDownloadingAndSaveStoryVideoForTarget:(id)target controller:(UIViewController *)controller {
     static BOOL isStoryDownloadingVideo = NO;
     if (isStoryDownloadingVideo) {
+        customLog2(@"[MediaSaver] startDownloadingAndSaveStoryVideo: already downloading, ignoring request");
         [self showToast:@"Download in progress, please wait..." success:NO];
         return;
     }
     
+    customLog2(@"[MediaSaver] startDownloadingAndSaveStoryVideo: target=%@, controller=%@", NSStringFromClass([target class]), NSStringFromClass([controller class]));
+
     // 1. If already completely on disk, save directly
     NSString *immediatePath = [self findVideoPathForTarget:target] ?: [self findVideoPathForTarget:controller];
+    customLog2(@"[MediaSaver] immediatePath check: %@", immediatePath);
     if (immediatePath && [[NSFileManager defaultManager] fileExistsAtPath:immediatePath]) {
         if (![immediatePath hasSuffix:@"_partial"]) {
+            customLog2(@"[MediaSaver] immediate complete video found on disk! Saving directly: %@", immediatePath);
             [self saveVideoToPhotos:immediatePath];
             return;
         }
@@ -1261,12 +1275,18 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         fetchControlFn = (FetchControlFunc)dlsym(RTLD_DEFAULT, "$s14AccountContext18UniversalVideoNodeC12fetchControlyyAA0cde5FetchG0OF");
+        customLog2(@"[MediaSaver] dlsym fetchControlFn resolved to: %p", fetchControlFn);
     });
     UIView *targetView = [target isKindOfClass:[UIView class]] ? (UIView *)target : (controller.isViewLoaded ? controller.view : nil);
-    if (fetchControlFn && targetView) {
-        id vn = findUniversalVideoNode(targetView);
-        if (vn) {
+    id vn = findUniversalVideoNode(targetView);
+    customLog2(@"[MediaSaver] findUniversalVideoNode returned: %@ (targetView: %@)", vn, NSStringFromClass([targetView class]));
+    if (fetchControlFn && vn) {
+        @try {
+            customLog2(@"[MediaSaver] Calling fetchControlFn on %@", vn);
             fetchControlFn((__bridge void *)vn, 0); // 0 = .fetch
+            customLog2(@"[MediaSaver] fetchControlFn executed successfully");
+        } @catch (NSException *ex) {
+            customLog2(@"[MediaSaver] fetchControlFn threw exception: %@", ex);
         }
     }
     
@@ -1289,7 +1309,12 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
                 NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
                 int64_t currentSize = [attrs[NSFileSize] longLongValue];
                 
+                if (i % 5 == 0 || i >= maxAttempts - 3) {
+                    customLog2(@"[MediaSaver] Poll #%d: found path = %@, size = %lld, isPartial = %d", i, path, currentSize, isPartial);
+                }
+                
                 if (!isPartial && currentSize >= 40 * 1024) {
+                    customLog2(@"[MediaSaver] Poll #%d: complete file ready! Saving to Photos: %@", i, path);
                     isStoryDownloadingVideo = NO;
                     dispatch_async(dispatch_get_main_queue(), ^{
                         [MediaSaver saveVideoToPhotos:path];
@@ -1307,27 +1332,37 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
                     
                     if (stableCount >= 3 || i >= 28) {
                         NSString *tmpPath = [MediaSaver ensureVideoExtension:path];
+                        customLog2(@"[MediaSaver] Poll #%d: partial file stable (%lld bytes, stableCount %d), checking playable at %@", i, currentSize, stableCount, tmpPath);
                         if (tmpPath && [[NSFileManager defaultManager] fileExistsAtPath:tmpPath]) {
                             AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:tmpPath] options:nil];
                             if (asset.isPlayable) {
+                                customLog2(@"[MediaSaver] Partial video is playable! Saving to Photos: %@", tmpPath);
                                 isStoryDownloadingVideo = NO;
                                 dispatch_async(dispatch_get_main_queue(), ^{
                                     [MediaSaver saveVideoToPhotos:tmpPath];
                                 });
                                 return;
+                            } else {
+                                customLog2(@"[MediaSaver] Partial video not playable yet");
                             }
                         }
                     }
+                }
+            } else {
+                if (i % 5 == 0) {
+                    customLog2(@"[MediaSaver] Poll #%d: no video path found yet", i);
                 }
             }
         }
         
         NSString *finalPath = [MediaSaver findVideoPathForTarget:target] ?: [MediaSaver findVideoPathForTarget:controller];
+        customLog2(@"[MediaSaver] Polling finished after %d attempts. finalPath: %@", maxAttempts, finalPath);
         if (finalPath && [[NSFileManager defaultManager] fileExistsAtPath:finalPath]) {
             NSString *tmpPath = [MediaSaver ensureVideoExtension:finalPath];
             if (tmpPath) {
                 AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:tmpPath] options:nil];
                 if (asset.isPlayable) {
+                    customLog2(@"[MediaSaver] finalPath playable at timeout, saving: %@", tmpPath);
                     isStoryDownloadingVideo = NO;
                     dispatch_async(dispatch_get_main_queue(), ^{
                         [MediaSaver saveVideoToPhotos:tmpPath];
@@ -1337,6 +1372,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
             }
         }
         
+        customLog2(@"[MediaSaver] Video download timed out. Displaying timeout toast.");
         isStoryDownloadingVideo = NO;
         dispatch_async(dispatch_get_main_queue(), ^{
             [MediaSaver showToast:@"Video download timed out. Try again" success:NO];
@@ -1345,7 +1381,10 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 }
 
 + (void)saveMediaFromController:(UIViewController *)controller {
-    if (!controller) return;
+    if (!controller) {
+        customLog2(@"[MediaSaver] saveMediaFromController: controller is nil");
+        return;
+    }
     
     @try {
         UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
@@ -1353,13 +1392,16 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     } @catch (...) {}
     
     NSString *ctrlClass = NSStringFromClass([controller class]);
+    customLog2(@"[MediaSaver] saveMediaFromController: %@", ctrlClass);
     BOOL isStory = [ctrlClass containsString:@"StoryContainerScreen"] || [ctrlClass containsString:@"StoryContainer"];
     
     if (isStory) {
         UIView *storyView = findCurrentStoryContentView(controller);
         UIView *target = storyView ?: (controller.isViewLoaded ? controller.view : nil);
+        customLog2(@"[MediaSaver] Story detected. storyView: %@, target: %@", NSStringFromClass([storyView class]), NSStringFromClass([target class]));
         
         BOOL isVideo = isStoryItemDisplayingVideo(target);
+        customLog2(@"[MediaSaver] isStoryItemDisplayingVideo: %d", isVideo);
         if (isVideo) {
             [self startDownloadingAndSaveStoryVideoForTarget:target controller:controller];
             return;
