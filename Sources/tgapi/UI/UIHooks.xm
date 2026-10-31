@@ -426,6 +426,12 @@ static void refreshDeletedBadgesInView(UIView *view) {
 - (NSString *)mimeType;
 @end
 
+@interface _TtC12TelegramCore12TelegramUser : NSObject
+@end
+
+@interface _TtC7Display19SparseContainerView : UIView
+@end
+
 @interface _TtCC20StoryContainerScreen32StoryItemSetContainerComponent4View : UIView
 @end
 
@@ -444,6 +450,86 @@ static void refreshDeletedBadgesInView(UIView *view) {
         return YES;
     }
     return NO;
+}
+
+%end
+
+%hook _TtC12TelegramCore12TelegramUser
+
+- (id)initWithDecoder:(id)decoder {
+    id res = %orig(decoder);
+    if (res) {
+        Ivar ivar = class_getInstanceVariable([res class], "flags");
+        if (ivar) {
+            ptrdiff_t offset = ivar_getOffset(ivar);
+            int32_t *flagsPtr = (int32_t *)((uint8_t *)(__bridge void *)res + offset);
+            *flagsPtr |= (1 << 4); // UserInfoFlags.isPremium
+        }
+    }
+    return res;
+}
+
+- (BOOL)isPremium {
+    return YES;
+}
+
+%end
+
+%hook _TtC7Display19SparseContainerView
+
+- (void)setAlpha:(CGFloat)alpha {
+    %orig(alpha);
+    
+    UIView *parent = self.superview;
+    while (parent && ![NSStringFromClass([parent class]) containsString:@"StoryItemSetContainerComponent"]) {
+        parent = parent.superview;
+    }
+    if (parent) {
+        UIResponder *r = self.nextResponder;
+        while (r && ![r isKindOfClass:[UIViewController class]]) {
+            r = r.nextResponder;
+        }
+        UIViewController *ctrl = (UIViewController *)r;
+        UIView *root = (ctrl && ctrl.isViewLoaded) ? ctrl.view : self.window;
+        UIView *btn = [root viewWithTag:998811] ?: [self.window viewWithTag:998811];
+        if (btn) {
+            BOOL hidden = (alpha < 0.1);
+            if (hidden && btn.alpha <= 0.05) return;
+            if (!hidden && btn.alpha >= 0.95) return;
+            
+            [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+                btn.alpha = hidden ? 0.0 : 1.0;
+                btn.transform = hidden ? CGAffineTransformMakeScale(0.85, 0.85) : CGAffineTransformIdentity;
+            } completion:nil];
+        }
+    }
+}
+
+- (void)setHidden:(BOOL)hidden {
+    %orig(hidden);
+    
+    UIView *parent = self.superview;
+    while (parent && ![NSStringFromClass([parent class]) containsString:@"StoryItemSetContainerComponent"]) {
+        parent = parent.superview;
+    }
+    if (parent) {
+        UIResponder *r = self.nextResponder;
+        while (r && ![r isKindOfClass:[UIViewController class]]) {
+            r = r.nextResponder;
+        }
+        UIViewController *ctrl = (UIViewController *)r;
+        UIView *root = (ctrl && ctrl.isViewLoaded) ? ctrl.view : self.window;
+        UIView *btn = [root viewWithTag:998811] ?: [self.window viewWithTag:998811];
+        if (btn) {
+            if (hidden && btn.alpha <= 0.05) return;
+            if (!hidden && btn.alpha >= 0.95) return;
+            
+            [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseInOut animations:^{
+                btn.alpha = hidden ? 0.0 : 1.0;
+                btn.transform = hidden ? CGAffineTransformMakeScale(0.85, 0.85) : CGAffineTransformIdentity;
+            } completion:nil];
+        }
+    }
 }
 
 %end

@@ -2085,7 +2085,7 @@ class TLParser: NSObject {
                     }
                 } else if label == "id", let idVal = child.value as? Int64, idVal > 1000000000 {
                     if !fileIds.contains(idVal) { fileIds.append(idVal) }
-                } else if ["media", "fileReference", "resource", "content", "videoNode", "contentNode", "item", "entry", "message"].contains(label) {
+                } else if ["media", "fileReference", "resource", "content", "videoNode", "contentNode", "item", "entry", "message", "currentMessageMedia", "currentMessageMetadataMedia", "component", "slice", "storyItem", "effectivePeer", "visibleItems"].contains(label) {
                     let subDesc = String(describing: child.value)
                     parseIdentifiers(fromText: subDesc, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)
                     extractMediaInfo(from: child.value, visited: &visited, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths)

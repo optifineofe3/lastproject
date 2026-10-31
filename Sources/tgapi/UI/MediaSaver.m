@@ -9,6 +9,7 @@
 #import <fcntl.h>
 #import <unistd.h>
 #import <pthread.h>
+#import <dlfcn.h>
 
 @interface MediaSaverButton : UIButton
 @property (nonatomic, weak) UIViewController *targetController;
@@ -501,6 +502,14 @@ static UIView *findCurrentStoryContentView(UIViewController *controller) {
 static BOOL isStoryItemDisplayingVideo(UIView *view) {
     if (!view) return NO;
     
+    @try {
+        Ivar ivar = class_getInstanceVariable([view class], "videoNode");
+        if (ivar) {
+            id vn = object_getIvar(view, ivar);
+            if (vn) return YES;
+        }
+    } @catch (...) {}
+    
     NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:view];
     while (queue.count > 0) {
         UIView *v = queue.firstObject;
@@ -546,6 +555,38 @@ static BOOL isStoryItemDisplayingVideo(UIView *view) {
         }
     }
     return NO;
+}
+
+static id findUniversalVideoNode(UIView *view) {
+    if (!view) return nil;
+    @try {
+        Ivar ivar = class_getInstanceVariable([view class], "videoNode");
+        if (ivar) {
+            id vn = object_getIvar(view, ivar);
+            if (vn) return vn;
+        }
+    } @catch (...) {}
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:view];
+    while (queue.count > 0) {
+        UIView *v = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        @try {
+            id node = [v valueForKey:@"asyncdisplaykit_node"];
+            if (node && [NSStringFromClass([node class]) containsString:@"UniversalVideoNode"]) {
+                return node;
+            }
+        } @catch (...) {}
+        @try {
+            id vn = [v valueForKey:@"videoNode"];
+            if (vn && [NSStringFromClass([vn class]) containsString:@"UniversalVideoNode"]) {
+                return vn;
+            }
+        } @catch (...) {}
+        for (UIView *sub in v.subviews) {
+            [queue addObject:sub];
+        }
+    }
+    return nil;
 }
 
 static UIImage *extractImageFromStoryImageView(UIView *view) {
@@ -1054,7 +1095,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     if (parserCls && [parserCls respondsToSelector:@selector(findMediaFilePathFromTarget:)]) {
         NSString *path = [parserCls findMediaFilePathFromTarget:target];
         if (path && [fm fileExistsAtPath:path]) {
-            return [self ensureVideoExtension:path];
+            return path;
         }
     }
     
@@ -1073,7 +1114,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     if (view) {
         NSString *playerPath = extractPathFromPlayerLayer(view.layer);
         if (playerPath && [fm fileExistsAtPath:playerPath]) {
-            return [self ensureVideoExtension:playerPath];
+            return playerPath;
         }
     }
     
@@ -1095,7 +1136,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         if ([fm fileExistsAtPath:active]) {
             NSDictionary *attrs = [fm attributesOfItemAtPath:active error:nil];
             if (attrs && [attrs fileSize] >= 40 * 1024) {
-                return [self ensureVideoExtension:active];
+                return active;
             }
         }
     }
@@ -1108,7 +1149,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
                 recent = complete;
             }
         }
-        return [self ensureVideoExtension:recent];
+        return recent;
     }
     
     return nil;
@@ -1198,6 +1239,111 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     });
 }
 
++ (void)startDownloadingAndSaveStoryVideoForTarget:(id)target controller:(UIViewController *)controller {
+    static BOOL isStoryDownloadingVideo = NO;
+    if (isStoryDownloadingVideo) {
+        [self showToast:@"Download in progress, please wait..." success:NO];
+        return;
+    }
+    
+    // 1. If already completely on disk, save directly
+    NSString *immediatePath = [self findVideoPathForTarget:target] ?: [self findVideoPathForTarget:controller];
+    if (immediatePath && [[NSFileManager defaultManager] fileExistsAtPath:immediatePath]) {
+        if (![immediatePath hasSuffix:@"_partial"]) {
+            [self saveVideoToPhotos:immediatePath];
+            return;
+        }
+    }
+    
+    // 2. Trigger high priority fetch on UniversalVideoNode if possible
+    typedef void (*FetchControlFunc)(void *self, int control);
+    static FetchControlFunc fetchControlFn = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        fetchControlFn = (FetchControlFunc)dlsym(RTLD_DEFAULT, "$s14AccountContext18UniversalVideoNodeC12fetchControlyyAA0cde5FetchG0OF");
+    });
+    UIView *targetView = [target isKindOfClass:[UIView class]] ? (UIView *)target : (controller.isViewLoaded ? controller.view : nil);
+    if (fetchControlFn && targetView) {
+        id vn = findUniversalVideoNode(targetView);
+        if (vn) {
+            fetchControlFn((__bridge void *)vn, 0); // 0 = .fetch
+        }
+    }
+    
+    // 3. Inform user that video download is in progress
+    isStoryDownloadingVideo = YES;
+    [self showToast:@"Downloading video, please wait..." success:NO];
+    
+    // 4. Background polling worker
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        int maxAttempts = 35; // ~12 seconds
+        int64_t lastSize = -1;
+        int stableCount = 0;
+        
+        for (int i = 0; i < maxAttempts; i++) {
+            [NSThread sleepForTimeInterval:0.35];
+            
+            NSString *path = [MediaSaver findVideoPathForTarget:target] ?: [MediaSaver findVideoPathForTarget:controller];
+            if (path && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+                BOOL isPartial = [path hasSuffix:@"_partial"];
+                NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+                int64_t currentSize = [attrs[NSFileSize] longLongValue];
+                
+                if (!isPartial && currentSize >= 40 * 1024) {
+                    isStoryDownloadingVideo = NO;
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [MediaSaver saveVideoToPhotos:path];
+                    });
+                    return;
+                }
+                
+                if (isPartial && currentSize >= 100 * 1024) {
+                    if (currentSize == lastSize) {
+                        stableCount++;
+                    } else {
+                        stableCount = 0;
+                        lastSize = currentSize;
+                    }
+                    
+                    if (stableCount >= 3 || i >= 28) {
+                        NSString *tmpPath = [MediaSaver ensureVideoExtension:path];
+                        if (tmpPath && [[NSFileManager defaultManager] fileExistsAtPath:tmpPath]) {
+                            AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:tmpPath] options:nil];
+                            if (asset.isPlayable) {
+                                isStoryDownloadingVideo = NO;
+                                dispatch_async(dispatch_get_main_queue(), ^{
+                                    [MediaSaver saveVideoToPhotos:tmpPath];
+                                });
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        NSString *finalPath = [MediaSaver findVideoPathForTarget:target] ?: [MediaSaver findVideoPathForTarget:controller];
+        if (finalPath && [[NSFileManager defaultManager] fileExistsAtPath:finalPath]) {
+            NSString *tmpPath = [MediaSaver ensureVideoExtension:finalPath];
+            if (tmpPath) {
+                AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:tmpPath] options:nil];
+                if (asset.isPlayable) {
+                    isStoryDownloadingVideo = NO;
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [MediaSaver saveVideoToPhotos:tmpPath];
+                    });
+                    return;
+                }
+            }
+        }
+        
+        isStoryDownloadingVideo = NO;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [MediaSaver showToast:@"Video download timed out. Try again" success:NO];
+        });
+    });
+}
+
 + (void)saveMediaFromController:(UIViewController *)controller {
     if (!controller) return;
     
@@ -1215,15 +1361,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         
         BOOL isVideo = isStoryItemDisplayingVideo(target);
         if (isVideo) {
-            NSString *videoPath = [self findVideoPathForTarget:target];
-            if (!videoPath) {
-                videoPath = [self findVideoPathForTarget:controller];
-            }
-            if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
-                [self saveVideoToPhotos:videoPath];
-                return;
-            }
-            [self showToast:@"Video is downloading, please wait..." success:NO];
+            [self startDownloadingAndSaveStoryVideoForTarget:target controller:controller];
             return;
         } else {
             // Photo story: extract full resolution original UIImage from StoryItemImageView

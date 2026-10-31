@@ -19,6 +19,7 @@
 + (NSString *)lastOpenedVideoPath;
 + (NSString *)currentActivePlayingVideoPath;
 + (NSString *)findVideoPathForTarget:(id)target;
++ (void)startDownloadingAndSaveStoryVideoForTarget:(id)target controller:(UIViewController *)controller;
 
 - (void)handleButtonTap:(id)sender;
 - (void)handleInstantVideoDoubleTap:(UITapGestureRecognizer *)gesture;
