@@ -146,7 +146,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		case READ_RECEIPT:
 		   return 2;
 		case MISC:
-		   return 8;
+		   return 7;
 		case FILE_FIXER:
 		   return 2;
 		case FAKE_LOCATION:
@@ -355,12 +355,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 			cell.detailTextLabel.text = TGLoc(@"ANTI_SELF_DESTRUCT_SUBTITLE");
 		}
 		else if (indexPath.row == 6) {
-			cell.imageView.image = [UIImage systemImageNamed:@"square.and.arrow.down.fill"];
-			cell.imageView.tintColor = [self dynamicColorBW];
-			cell.textLabel.text = TGLoc(@"DOWNLOAD_STORIES_TITLE");
-			cell.detailTextLabel.text = TGLoc(@"DOWNLOAD_STORIES_SUBTITLE");
-		}
-		else if (indexPath.row == 7) {
 			cell.imageView.image = [UIImage systemImageNamed:@"mic.fill"];
 			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"SEND_AS_VOICE_TITLE");
@@ -560,8 +554,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
                 case 3: return kAntiAutoDelete;
                 case 4: return kDisableScreenshotNotification;
                 case 5: return kAntiSelfDestruct;
-                case 6: return kDownloadStories;
-                case 7: return kSendAsVoice;
+                case 6: return kSendAsVoice;
                 default: return nil;
             }
         case 3:

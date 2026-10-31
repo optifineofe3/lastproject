@@ -458,11 +458,192 @@ static id findCentralGalleryItemNode(UIViewController *controller) {
     return nil;
 }
 
+static UIView *findCurrentStoryContentView(UIViewController *controller) {
+    if (!controller || !controller.isViewLoaded) return nil;
+    UIView *rootView = controller.view;
+    if (!rootView) return nil;
+    
+    CGFloat screenCenterX = CGRectGetMidX(rootView.bounds);
+    UIView *bestView = nil;
+    CGFloat minDistance = CGFLOAT_MAX;
+    
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:rootView];
+    while (queue.count > 0) {
+        UIView *v = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        
+        NSString *cls = NSStringFromClass([v class]);
+        if ([cls containsString:@"StoryItemContentComponent"]) {
+            if (!v.isHidden && v.alpha >= 0.05) {
+                CGRect rectInRoot = [v convertRect:v.bounds toView:rootView];
+                if (rectInRoot.size.width >= 100 && rectInRoot.size.height >= 100) {
+                    CGFloat midX = CGRectGetMidX(rectInRoot);
+                    CGFloat dist = fabs(midX - screenCenterX);
+                    if (dist < minDistance) {
+                        minDistance = dist;
+                        bestView = v;
+                    }
+                }
+            }
+        }
+        
+        for (UIView *sub in v.subviews) {
+            [queue addObject:sub];
+        }
+    }
+    
+    if (bestView && minDistance < rootView.bounds.size.width * 0.6) {
+        return bestView;
+    }
+    return nil;
+}
+
+static BOOL isStoryItemDisplayingVideo(UIView *view) {
+    if (!view) return NO;
+    
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:view];
+    while (queue.count > 0) {
+        UIView *v = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        
+        NSString *cls = NSStringFromClass([v class]);
+        if ([cls containsString:@"UniversalVideo"] ||
+            [cls containsString:@"MediaPlayer"] ||
+            [cls containsString:@"VideoPlayback"] ||
+            [cls containsString:@"StoryVideo"]) {
+            if (isViewVisibleInWindow(v)) {
+                return YES;
+            }
+        }
+        
+        @try {
+            id node = [v valueForKey:@"asyncdisplaykit_node"];
+            if (node) {
+                NSString *ncls = NSStringFromClass([node class]);
+                if ([ncls containsString:@"UniversalVideo"] || [ncls containsString:@"Video"]) {
+                    if (isViewVisibleInWindow(v)) {
+                        return YES;
+                    }
+                }
+            }
+        } @catch (...) {}
+        
+        Class sampleBufferClass = NSClassFromString(@"AVSampleBufferDisplayLayer");
+        Class mediaLayerClass = NSClassFromString(@"MediaPlayerNodeLayer");
+        if ((sampleBufferClass && [v.layer isKindOfClass:sampleBufferClass]) ||
+            (mediaLayerClass && [v.layer isKindOfClass:mediaLayerClass])) {
+            if (isViewVisibleInWindow(v)) {
+                return YES;
+            }
+        }
+        
+        if (extractPathFromPlayerLayer(v.layer) != nil) {
+            return YES;
+        }
+        
+        for (UIView *sub in v.subviews) {
+            [queue addObject:sub];
+        }
+    }
+    return NO;
+}
+
+static UIImage *extractImageFromStoryImageView(UIView *view) {
+    if (!view) return nil;
+    
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:view];
+    UIView *storyImageView = nil;
+    
+    while (queue.count > 0) {
+        UIView *v = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        
+        NSString *cls = NSStringFromClass([v class]);
+        if ([cls containsString:@"StoryItemImage"]) {
+            storyImageView = v;
+            break;
+        }
+        for (UIView *sub in v.subviews) {
+            [queue addObject:sub];
+        }
+    }
+    
+    UIView *targetView = storyImageView ?: view;
+    
+    // 1. Try KVC "contentView"
+    @try {
+        id cv = [targetView valueForKey:@"contentView"];
+        if ([cv isKindOfClass:[UIImageView class]]) {
+            UIImage *img = [(UIImageView *)cv image];
+            if (img && img.size.width >= 80 && img.size.height >= 80) {
+                return img;
+            }
+        }
+    } @catch (...) {}
+    
+    // 2. Try Ivar "contentView"
+    Ivar ivar = class_getInstanceVariable([targetView class], "contentView");
+    if (ivar) {
+        id val = object_getIvar(targetView, ivar);
+        if ([val isKindOfClass:[UIImageView class]]) {
+            UIImage *img = [(UIImageView *)val image];
+            if (img && img.size.width >= 80 && img.size.height >= 80) {
+                return img;
+            }
+        }
+    }
+    
+    // 3. Scan layers for delegate (UIImageView) or layer contents (CGImageRef)
+    NSMutableArray<CALayer *> *layerQueue = [NSMutableArray arrayWithObject:targetView.layer];
+    UIImage *bestImage = nil;
+    size_t bestArea = 0;
+    
+    while (layerQueue.count > 0) {
+        CALayer *l = layerQueue.firstObject;
+        [layerQueue removeObjectAtIndex:0];
+        
+        id del = l.delegate;
+        if ([del isKindOfClass:[UIImageView class]]) {
+            UIImage *img = [(UIImageView *)del image];
+            if (img) {
+                size_t area = (size_t)(img.size.width * img.size.height * (img.scale > 0 ? img.scale : 1.0));
+                if (area > bestArea && img.size.width >= 80 && img.size.height >= 80) {
+                    bestArea = area;
+                    bestImage = img;
+                }
+            }
+        }
+        
+        id contents = l.contents;
+        if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
+            CGImageRef cg = (__bridge CGImageRef)contents;
+            size_t w = CGImageGetWidth(cg);
+            size_t h = CGImageGetHeight(cg);
+            if (w * h > bestArea && w >= 80 && h >= 80) {
+                bestArea = w * h;
+                bestImage = [UIImage imageWithCGImage:cg scale:[UIScreen mainScreen].scale orientation:UIImageOrientationUp];
+            }
+        }
+        
+        for (CALayer *sub in l.sublayers) {
+            [layerQueue addObject:sub];
+        }
+    }
+    
+    return bestImage;
+}
+
 static BOOL isControllerDisplayingVideo(UIViewController *controller) {
     if (!controller) return NO;
     
     NSString *controllerClass = NSStringFromClass([controller class]);
     BOOL isGallery = [controllerClass containsString:@"GalleryController"];
+    BOOL isStory = [controllerClass containsString:@"StoryContainerScreen"] || [controllerClass containsString:@"StoryContainer"];
+    
+    if (isStory) {
+        UIView *storyView = findCurrentStoryContentView(controller);
+        return isStoryItemDisplayingVideo(storyView ?: (controller.isViewLoaded ? controller.view : nil));
+    }
     
     id central = findCentralGalleryItemNode(controller);
     if (central) {
@@ -503,6 +684,45 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
                 checkImage([(UIImageView *)view image]);
             }
             
+            NSString *vcls = NSStringFromClass([view class]);
+            if ([vcls containsString:@"StoryItemImage"] || [vcls containsString:@"ImageView"]) {
+                @try {
+                    id cv = [view valueForKey:@"contentView"];
+                    if ([cv isKindOfClass:[UIImageView class]]) {
+                        checkImage([(UIImageView *)cv image]);
+                    }
+                } @catch (...) {}
+                
+                Ivar ivar = class_getInstanceVariable([view class], "contentView");
+                if (ivar) {
+                    id val = object_getIvar(view, ivar);
+                    if ([val isKindOfClass:[UIImageView class]]) {
+                        checkImage([(UIImageView *)val image]);
+                    }
+                }
+            }
+            
+            for (CALayer *sublayer in view.layer.sublayers) {
+                id subDel = sublayer.delegate;
+                if ([subDel isKindOfClass:[UIImageView class]]) {
+                    checkImage([(UIImageView *)subDel image]);
+                }
+                id subContents = sublayer.contents;
+                if (subContents && CFGetTypeID((__bridge CFTypeRef)subContents) == CGImageGetTypeID()) {
+                    checkLayerContents((__bridge CGImageRef)subContents);
+                }
+                for (CALayer *subSublayer in sublayer.sublayers) {
+                    id ssDel = subSublayer.delegate;
+                    if ([ssDel isKindOfClass:[UIImageView class]]) {
+                        checkImage([(UIImageView *)ssDel image]);
+                    }
+                    id ssContents = subSublayer.contents;
+                    if (ssContents && CFGetTypeID((__bridge CFTypeRef)ssContents) == CGImageGetTypeID()) {
+                        checkLayerContents((__bridge CGImageRef)ssContents);
+                    }
+                }
+            }
+            
             @try {
                 id node = [view valueForKey:@"asyncdisplaykit_node"];
                 if (node && [node respondsToSelector:@selector(image)]) {
@@ -523,13 +743,18 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
     NSString *className = NSStringFromClass([controller class]);
     BOOL isGallery = [className containsString:@"GalleryController"];
     BOOL isSecret = [className containsString:@"SecretMediaPreviewController"];
+    BOOL isStory = [className containsString:@"StoryContainerScreen"] || [className containsString:@"StoryContainer"];
     
-    if (!isGallery && !isSecret) return;
+    if (!isGallery && !isSecret && !isStory) return;
     
     UIView *view = controller.view;
     if (!view) return;
     
-    if ([view viewWithTag:998811]) return;
+    UIView *existingBtn = [view viewWithTag:998811];
+    if (existingBtn) {
+        [view bringSubviewToFront:existingBtn];
+        return;
+    }
     
     MediaSaverButton *btn = [MediaSaverButton buttonWithType:UIButtonTypeCustom];
     btn.tag = 998811;
@@ -564,6 +789,13 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
             [btn.widthAnchor constraintEqualToConstant:42],
             [btn.heightAnchor constraintEqualToConstant:42]
         ]];
+    } else if (isStory) {
+        [NSLayoutConstraint activateConstraints:@[
+            [btn.bottomAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.bottomAnchor constant:-85],
+            [btn.trailingAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.trailingAnchor constant:-16],
+            [btn.widthAnchor constraintEqualToConstant:42],
+            [btn.heightAnchor constraintEqualToConstant:42]
+        ]];
     } else {
         [NSLayoutConstraint activateConstraints:@[
             [btn.bottomAnchor constraintEqualToAnchor:view.safeAreaLayoutGuide.bottomAnchor constant:-60],
@@ -578,9 +810,15 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         btn.transform = CGAffineTransformIdentity;
     } completion:nil];
     
-    UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleLongPress:)];
-    lp.minimumPressDuration = 0.5;
-    [view addGestureRecognizer:lp];
+    if (!isStory) {
+        UILongPressGestureRecognizer *lp = [[UILongPressGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleLongPress:)];
+        lp.minimumPressDuration = 0.5;
+        [view addGestureRecognizer:lp];
+    }
+    
+    UILongPressGestureRecognizer *btnLp = [[UILongPressGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleLongPress:)];
+    btnLp.minimumPressDuration = 0.5;
+    [btn addGestureRecognizer:btnLp];
 }
 
 + (void)detachFromController:(UIViewController *)controller animated:(BOOL)animated {
@@ -967,6 +1205,46 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
         [feedback impactOccurred];
     } @catch (...) {}
+    
+    NSString *ctrlClass = NSStringFromClass([controller class]);
+    BOOL isStory = [ctrlClass containsString:@"StoryContainerScreen"] || [ctrlClass containsString:@"StoryContainer"];
+    
+    if (isStory) {
+        UIView *storyView = findCurrentStoryContentView(controller);
+        UIView *target = storyView ?: (controller.isViewLoaded ? controller.view : nil);
+        
+        BOOL isVideo = isStoryItemDisplayingVideo(target);
+        if (isVideo) {
+            NSString *videoPath = [self findVideoPathForTarget:target];
+            if (!videoPath) {
+                videoPath = [self findVideoPathForTarget:controller];
+            }
+            if (videoPath && [[NSFileManager defaultManager] fileExistsAtPath:videoPath]) {
+                [self saveVideoToPhotos:videoPath];
+                return;
+            }
+            [self showToast:@"Video is downloading, please wait..." success:NO];
+            return;
+        } else {
+            // Photo story: extract full resolution original UIImage from StoryItemImageView
+            UIImage *image = extractImageFromStoryImageView(target);
+            if (!image) {
+                image = [self findImageInView:target];
+            }
+            if (!image && controller.isViewLoaded && target != controller.view) {
+                image = extractImageFromStoryImageView(controller.view);
+                if (!image) {
+                    image = [self findImageInView:controller.view];
+                }
+            }
+            if (image) {
+                [self saveImageToPhotos:image];
+                return;
+            }
+            [self showToast:@"Photo is loading, please wait..." success:NO];
+            return;
+        }
+    }
     
     id centralNode = findCentralGalleryItemNode(controller);
     BOOL isVideo = NO;

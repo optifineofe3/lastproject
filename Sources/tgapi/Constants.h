@@ -72,7 +72,6 @@
 #define kAntiAutoDelete @"LeadAntiAutoDelete"
 #define kConfirmCalls @"LeadConfirmCalls"
 #define kHideStories @"LeadHideStories"
-#define kDownloadStories @"LeadDownloadStories"
 
 #define FAKE_LOCATION_ENABLED_KEY @"LeadFakeLocation"
 #define FAKE_LATITUDE_KEY @"LeadSavedLatitude"

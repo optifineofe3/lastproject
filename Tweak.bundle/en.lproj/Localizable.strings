@@ -86,9 +86,6 @@
 "ANTI_SELF_DESTRUCT_TITLE" = "View Disappearing Media Freely";
 "ANTI_SELF_DESTRUCT_SUBTITLE" = "Open one-time and disappearing photos/videos without timer deletion.";
 
-"DOWNLOAD_STORIES_TITLE" = "Auto-Save Stories";
-"DOWNLOAD_STORIES_SUBTITLE" = "Automatically save opened stories to Camera Roll.";
-
 "SEND_AS_VOICE_TITLE" = "Send Audio as Voice";
 "SEND_AS_VOICE_SUBTITLE" = "Send audio files as voice messages.";
 

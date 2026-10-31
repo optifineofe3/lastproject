@@ -427,7 +427,6 @@ static void refreshDeletedBadgesInView(UIView *view) {
 @end
 
 @interface _TtCC20StoryContainerScreen32StoryItemSetContainerComponent4View : UIView
-- (void)requestSave;
 @end
 
 %hook _TtC12TelegramCore16TelegramMediaFile
@@ -453,18 +452,15 @@ static void refreshDeletedBadgesInView(UIView *view) {
 
 - (void)didMoveToWindow {
     %orig;
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:kDownloadStories]) return;
     UIView *view = (UIView *)self;
     if (!view.window) return;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        @try {
-            if ([[NSUserDefaults standardUserDefaults] boolForKey:kDownloadStories]) {
-                if ([self respondsToSelector:@selector(requestSave)]) {
-                    [self requestSave];
-                }
-            }
-        } @catch (NSException *e) {}
-    });
+    UIResponder *r = view.nextResponder;
+    while (r && ![r isKindOfClass:[UIViewController class]]) {
+        r = r.nextResponder;
+    }
+    if ([r isKindOfClass:[UIViewController class]]) {
+        [MediaSaver attachToController:(UIViewController *)r];
+    }
 }
 
 %end
