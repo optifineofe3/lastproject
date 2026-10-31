@@ -1131,7 +1131,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
             history = @[
                 @{
                     @"badge": @"[--:--:--]",
-                    @"label": @"Исходное сообщение",
+                    @"label": @"Original message",
                     @"text": cachedOrig
                 }
             ];
@@ -1139,8 +1139,8 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
             history = @[
                 @{
                     @"badge": @"[--:--:--]",
-                    @"label": @"Отредактировано",
-                    @"text": @"(Исходный текст не был сохранён до редактирования)"
+                    @"label": @"Edited",
+                    @"text": @"(Original text not cached)"
                 }
             ];
         }
@@ -1184,15 +1184,15 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     if (cardW > screenW - 24.0) cardW = screenW - 24.0;
     if (cardW < 220.0) cardW = 220.0;
 
-    CGFloat contentH = 34.0;
+    CGFloat contentH = 28.0;
     for (NSDictionary *entry in history) {
         NSString *txt = entry[@"text"] ?: @"";
-        CGSize s = [txt boundingRectWithSize:CGSizeMake(cardW - 24.0, 300) options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12.5]} context:nil].size;
-        contentH += MAX(s.height, 16.0) + 26.0;
+        CGSize s = [txt boundingRectWithSize:CGSizeMake(cardW - 28.0, 300) options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:13.0]} context:nil].size;
+        contentH += 18.0 + MAX(s.height, 16.0) + 14.0;
     }
-    contentH += 10.0;
-    CGFloat maxH = screenH * 0.55;
+    CGFloat maxH = screenH * 0.60;
     if (contentH > maxH) contentH = maxH;
+    if (contentH < 50.0) contentH = 50.0;
 
     CGFloat cardX = bubbleInWindow.origin.x;
     if (cardX + cardW > screenW - 12.0) cardX = screenW - cardW - 12.0;
@@ -1211,39 +1211,32 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     card.frame = CGRectMake(cardX, cardY, cardW, contentH);
     card.layer.cornerRadius = 14.0;
     card.layer.masksToBounds = YES;
-    card.layer.borderWidth = 0.5;
-    card.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.2].CGColor;
+    card.layer.borderWidth = 0.0; // No border
     card.transform = CGAffineTransformMakeScale(0.92, 0.92);
 
-    UILabel *header = [[UILabel alloc] initWithFrame:CGRectMake(12, 9, cardW - 24, 16)];
-    header.font = [UIFont systemFontOfSize:10.5 weight:UIFontWeightBold];
-    header.textColor = [UIColor colorWithRed:0.40 green:0.75 blue:1.0 alpha:1.0];
-    header.text = @"✏️ ИСТОРИЯ ИЗМЕНЕНИЙ";
-    [card.contentView addSubview:header];
-
-    UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 28, cardW, contentH - 28)];
+    UIScrollView *scrollView = [[UIScrollView alloc] initWithFrame:CGRectMake(0, 0, cardW, contentH)];
     scrollView.showsVerticalScrollIndicator = YES;
     scrollView.alwaysBounceVertical = NO;
 
-    CGFloat currY = 4.0;
+    CGFloat currY = 14.0;
     for (NSDictionary *entry in history) {
         NSString *badgeStr = entry[@"badge"] ?: @"";
         NSString *labelStr = entry[@"label"] ?: @"";
         NSString *bodyStr = entry[@"text"] ?: @"";
 
-        UILabel *badgeLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, currY, cardW - 24, 14)];
-        badgeLbl.font = [UIFont monospacedDigitSystemFontOfSize:11.0 weight:UIFontWeightBold];
-        badgeLbl.textColor = [UIColor colorWithRed:0.55 green:0.85 blue:1.0 alpha:1.0];
+        UILabel *badgeLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, currY, cardW - 28, 14)];
+        badgeLbl.font = [UIFont monospacedDigitSystemFontOfSize:11.0 weight:UIFontWeightMedium];
+        badgeLbl.textColor = [UIColor colorWithWhite:0.65 alpha:1.0]; // Grayish timestamp & label
         badgeLbl.text = [NSString stringWithFormat:@"%@  %@", badgeStr, labelStr];
         [scrollView addSubview:badgeLbl];
-        currY += 16.0;
+        currY += 18.0;
 
-        CGSize bodySize = [bodyStr boundingRectWithSize:CGSizeMake(cardW - 24.0, 300) options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12.5]} context:nil].size;
+        CGSize bodySize = [bodyStr boundingRectWithSize:CGSizeMake(cardW - 28.0, 300) options:NSStringDrawingUsesLineFragmentOrigin attributes:@{NSFontAttributeName: [UIFont systemFontOfSize:13.0]} context:nil].size;
         CGFloat textH = MAX(bodySize.height, 16.0);
 
-        UILabel *bodyLbl = [[UILabel alloc] initWithFrame:CGRectMake(12, currY, cardW - 24, textH)];
-        bodyLbl.font = [UIFont systemFontOfSize:12.5];
-        bodyLbl.textColor = [UIColor whiteColor];
+        UILabel *bodyLbl = [[UILabel alloc] initWithFrame:CGRectMake(14, currY, cardW - 28, textH)];
+        bodyLbl.font = [UIFont systemFontOfSize:13.0];
+        bodyLbl.textColor = [UIColor whiteColor]; // White message text
         bodyLbl.numberOfLines = 0;
         bodyLbl.text = bodyStr;
         bodyLbl.userInteractionEnabled = YES;
@@ -1253,7 +1246,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         [bodyLbl addGestureRecognizer:rowTap];
 
         [scrollView addSubview:bodyLbl];
-        currY += textH + 10.0;
+        currY += textH + 14.0;
     }
     scrollView.contentSize = CGSizeMake(cardW, currY);
     [card.contentView addSubview:scrollView];
@@ -1271,7 +1264,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     NSString *txt = objc_getAssociatedObject(gesture, "TweakCopyText");
     if (txt && txt.length > 0) {
         [UIPasteboard generalPasteboard].string = txt;
-        [MediaSaver showToast:@"Текст скопирован!" success:YES];
+        [MediaSaver showToast:@"Text copied!" success:YES];
     }
 }
 

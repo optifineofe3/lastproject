@@ -62,6 +62,66 @@ class TLParser: NSObject {
     private static var _editedIdsLoaded = false
     private static let editedIdsQueue = DispatchQueue(label: "com.lead.editedIds", attributes: .concurrent)
 
+    // Multi-edit history chain: messageId -> [["date": Int32, "text": String]]
+    private static let editChainUdKey = "TweakMessageEditChains"
+    private static var _editChains = [Int32: [[String: Any]]]()
+    private static var _editChainsLoaded = false
+
+    private static func loadEditChainsIfNeeded() {
+        if !_editChainsLoaded {
+            _editChainsLoaded = true
+            if let saved = UserDefaults.standard.dictionary(forKey: editChainUdKey) as? [String: [[String: Any]]] {
+                for (k, v) in saved {
+                    if let intKey = Int32(k) { _editChains[intKey] = v }
+                }
+            }
+        }
+    }
+
+    private static func appendEditChain(id: Int32, text: String, date: Int32?) {
+        guard id != 0, !text.isEmpty else { return }
+        editedTextsQueue.async(flags: .barrier) {
+            loadEditChainsIfNeeded()
+            var chain = _editChains[id] ?? []
+            
+            if chain.isEmpty {
+                var orig: String?
+                origTextsQueue.sync {
+                    orig = _originalTexts[id]
+                }
+                if let o = orig, !o.isEmpty, o != text {
+                    chain.append([
+                        "date": (date != nil ? (date! - 60) : Int32(Date().timeIntervalSince1970 - 60)),
+                        "text": o
+                    ])
+                }
+            }
+            
+            if let last = chain.last, let lastText = last["text"] as? String, lastText == text {
+                return
+            }
+            
+            let ts = date ?? Int32(Date().timeIntervalSince1970)
+            chain.append([
+                "date": ts,
+                "text": text
+            ])
+            
+            if chain.count > 25 {
+                chain.removeFirst(chain.count - 25)
+            }
+            _editChains[id] = chain
+            
+            var saved = (UserDefaults.standard.dictionary(forKey: editChainUdKey) as? [String: [[String: Any]]]) ?? [:]
+            saved[String(id)] = chain
+            if saved.count > 1000 {
+                let keysToRemove = Array(saved.keys.prefix(saved.count - 1000))
+                for k in keysToRemove { saved.removeValue(forKey: k) }
+            }
+            UserDefaults.standard.set(saved, forKey: editChainUdKey)
+        }
+    }
+
     /// Load persisted deleted IDs and edited messages from UserDefaults into memory (call once at startup).
     @objc static func loadPersistedIds() {
         deletedQueue.async(flags: .barrier) {
@@ -115,6 +175,7 @@ class TLParser: NSObject {
                 UserDefaults.standard.set(saved, forKey: origTextsUdKey)
             }
         }
+        appendEditChain(id: id, text: text, date: nil)
     }
 
     @objc static func recordEditedMessage(id: Int32, newText: String) {
@@ -167,6 +228,10 @@ class TLParser: NSObject {
                 }
                 UserDefaults.standard.set(saved, forKey: editedTextsUdKey)
             }
+        }
+
+        if !newText.isEmpty {
+            appendEditChain(id: id, text: newText, date: nil)
         }
 
         DispatchQueue.main.async {
@@ -362,8 +427,22 @@ class TLParser: NSObject {
         let df = DateFormatter()
         df.dateFormat = "HH:mm:ss"
         
-        var list: [[String: Any]] = []
-        
+        func formatBadge(_ ts: Int32?) -> String {
+            if let t = ts, t > 0 {
+                let d = Date(timeIntervalSince1970: TimeInterval(t))
+                return "[\(df.string(from: d))]"
+            }
+            return "[\(df.string(from: Date()))]"
+        }
+
+        var chain: [[String: Any]] = []
+        if id != 0 {
+            editedTextsQueue.sync {
+                loadEditChainsIfNeeded()
+                chain = _editChains[id] ?? []
+            }
+        }
+
         var origText: String?
         if id != 0 {
             editedTextsQueue.sync {
@@ -379,43 +458,75 @@ class TLParser: NSObject {
         if editDate == nil, let cur = currentText, !cur.isEmpty, id != 0 {
             recordOriginalMessage(id: id, text: cur)
         }
-        
-        func formatBadge(_ ts: Int32?) -> String {
-            if let t = ts, t > 0 {
-                let d = Date(timeIntervalSince1970: TimeInterval(t))
-                return "[\(df.string(from: d))]"
-            }
-            return "[\(df.string(from: Date()))]"
-        }
-        
-        if let original = origText, !original.isEmpty {
-            let origTimeStr = formatBadge(origDate ?? (editDate != nil ? (editDate! - 60) : nil))
-            list.append([
-                "badge": origTimeStr,
-                "label": "Исходное сообщение",
-                "text": original,
-                "isOriginal": true
+
+        if chain.isEmpty, let o = origText, !o.isEmpty {
+            let oTime = origDate ?? (editDate != nil ? (editDate! - 60) : nil)
+            chain.append([
+                "date": oTime ?? Int32(Date().timeIntervalSince1970),
+                "text": o
             ])
-            
-            if let cur = currentText, !cur.isEmpty, cur != original {
-                let editTimeStr = formatBadge(editDate)
-                list.append([
-                    "badge": editTimeStr,
-                    "label": "Текущий текст",
-                    "text": cur,
-                    "isOriginal": false
+            if let cur = currentText, !cur.isEmpty, cur != o {
+                chain.append([
+                    "date": editDate ?? Int32(Date().timeIntervalSince1970),
+                    "text": cur
                 ])
             }
-        } else {
-            let editTimeStr = formatBadge(editDate)
+        } else if let cur = currentText, !cur.isEmpty {
+            if let last = chain.last, let lastText = last["text"] as? String {
+                if lastText != cur {
+                    chain.append([
+                        "date": editDate ?? Int32(Date().timeIntervalSince1970),
+                        "text": cur
+                    ])
+                    if id != 0 {
+                        appendEditChain(id: id, text: cur, date: editDate)
+                    }
+                }
+            } else if chain.isEmpty {
+                chain.append([
+                    "date": editDate ?? Int32(Date().timeIntervalSince1970),
+                    "text": cur
+                ])
+            }
+        }
+
+        var list: [[String: Any]] = []
+        let total = chain.count
+        
+        for (idx, item) in chain.enumerated() {
+            let itemText = (item["text"] as? String) ?? ""
+            let itemDate = item["date"] as? Int32
+            let timeStr = formatBadge(itemDate)
+            
+            let labelStr: String
+            if idx == 0 && total > 1 {
+                labelStr = "Original message"
+            } else if idx == total - 1 && total > 1 {
+                labelStr = "Current text"
+            } else if total > 2 {
+                labelStr = "Edit \(idx)"
+            } else {
+                labelStr = (origText != nil) ? "Current text" : "Edited"
+            }
+            
             list.append([
-                "badge": editTimeStr,
-                "label": "Отредактировано",
-                "text": currentText ?? "(Текст был изменён до кэширования твиком)",
+                "badge": timeStr,
+                "label": labelStr,
+                "text": itemText,
+                "isOriginal": (idx == 0 && total > 1)
+            ])
+        }
+
+        if list.isEmpty {
+            let timeStr = formatBadge(editDate)
+            list.append([
+                "badge": timeStr,
+                "label": "Edited",
+                "text": currentText ?? "(Original text not cached)",
                 "isOriginal": false
             ])
         }
-        
+
         return list as NSArray
     }
 
