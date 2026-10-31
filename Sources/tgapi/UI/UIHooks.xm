@@ -88,39 +88,134 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
 
     NSNumber *msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
     BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
+    BOOL isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
+    NSString *origText = msgId ? [NSClassFromString(@"TLParser") getOriginalTextForId:msgId] : nil;
 
     UILabel *badge = (UILabel *)[v viewWithTag:998855];
-    if (!isDel) {
-        if (badge) {
-            badge.hidden = YES;
-        }
+    UIView *origView = [v viewWithTag:998866];
+
+    if (!isDel && !isEdit) {
+        if (badge) badge.hidden = YES;
+        if (origView) origView.hidden = YES;
         return;
+    }
+
+    NSString *badgeText = nil;
+    UIColor *badgeBg = nil;
+    if (isDel && isEdit) {
+        badgeText = @"DEL • EDIT";
+        badgeBg = [UIColor colorWithRed:0.85 green:0.20 blue:0.20 alpha:0.85];
+    } else if (isDel) {
+        badgeText = @"DEL";
+        badgeBg = [UIColor colorWithRed:0.85 green:0.20 blue:0.20 alpha:0.85];
+    } else {
+        badgeText = @"EDIT";
+        badgeBg = [UIColor colorWithRed:0.18 green:0.52 blue:0.92 alpha:0.85];
     }
 
     if (!badge) {
         badge = [[UILabel alloc] init];
         badge.tag = 998855;
-        badge.text = @"🗑️";
         badge.textAlignment = NSTextAlignmentCenter;
-        badge.font = [UIFont systemFontOfSize:11];
-        badge.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
-        badge.layer.cornerRadius = 9.0;
+        badge.font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
+        badge.textColor = [UIColor whiteColor];
         badge.layer.masksToBounds = YES;
         badge.layer.zPosition = 1000;
-        badge.userInteractionEnabled = NO;
+        badge.userInteractionEnabled = YES;
+
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleEditBadgeTap:)];
+        [badge addGestureRecognizer:tap];
+
         [v addSubview:badge];
     }
 
+    badge.text = badgeText;
+    badge.backgroundColor = badgeBg;
     badge.hidden = NO;
+    if (msgId) {
+        objc_setAssociatedObject(badge, "LeadBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+
     CGRect bFrame = getContentFrameOfNode(node);
-    CGFloat badgeSize = 18.0;
-    CGFloat x = CGRectGetMaxX(bFrame) - badgeSize - 4.0;
+    CGSize textSize = [badgeText sizeWithAttributes:@{NSFontAttributeName: badge.font}];
+    CGFloat badgeWidth = MAX(textSize.width + 10.0, 26.0);
+    CGFloat badgeHeight = 15.0;
+    badge.layer.cornerRadius = badgeHeight / 2.0;
+
+    CGFloat x = CGRectGetMaxX(bFrame) - badgeWidth - 4.0;
     CGFloat y = CGRectGetMinY(bFrame) + 4.0;
     if (x < CGRectGetMinX(bFrame) + 2.0) {
         x = CGRectGetMinX(bFrame) + 2.0;
     }
-    badge.frame = CGRectMake(x, y, badgeSize, badgeSize);
+    badge.frame = CGRectMake(x, y, badgeWidth, badgeHeight);
     [v bringSubviewToFront:badge];
+
+    // Semi-transparent original message card for edited messages
+    if (isEdit && origText && origText.length > 0) {
+        if (!origView) {
+            origView = [[UIView alloc] init];
+            origView.tag = 998866;
+            origView.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.50];
+            origView.layer.cornerRadius = 8.0;
+            origView.layer.masksToBounds = YES;
+            origView.layer.zPosition = 999;
+            origView.alpha = 0.60;
+            origView.userInteractionEnabled = YES;
+
+            UITapGestureRecognizer *origTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleEditBadgeTap:)];
+            [origView addGestureRecognizer:origTap];
+
+            UILabel *headerLbl = [[UILabel alloc] init];
+            headerLbl.tag = 101;
+            headerLbl.font = [UIFont systemFontOfSize:7.5 weight:UIFontWeightBold];
+            headerLbl.textColor = [UIColor colorWithRed:0.75 green:0.88 blue:1.0 alpha:0.95];
+            headerLbl.text = @"ORIGINAL (TAP TO VIEW)";
+            [origView addSubview:headerLbl];
+
+            UILabel *bodyLbl = [[UILabel alloc] init];
+            bodyLbl.tag = 102;
+            bodyLbl.font = [UIFont italicSystemFontOfSize:10.5];
+            bodyLbl.textColor = [UIColor whiteColor];
+            bodyLbl.numberOfLines = 1;
+            bodyLbl.lineBreakMode = NSLineBreakByTruncatingTail;
+            [origView addSubview:bodyLbl];
+
+            [v addSubview:origView];
+        }
+
+        origView.hidden = NO;
+        if (msgId) {
+            objc_setAssociatedObject(origView, "LeadBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+
+        CGFloat maxW = (v.bounds.size.width > 20.0) ? (v.bounds.size.width - 20.0) : 250.0;
+        CGFloat origW = fmin(fmax(bFrame.size.width, 140.0), maxW);
+        CGFloat origH = 26.0;
+        CGFloat origX = CGRectGetMinX(bFrame);
+
+        if (CGRectGetMaxX(bFrame) > v.bounds.size.width / 2.0) {
+            origX = CGRectGetMaxX(bFrame) - origW;
+            if (origX < 8.0) origX = 8.0;
+        } else {
+            if (origX + origW > v.bounds.size.width - 8.0) {
+                origW = v.bounds.size.width - 8.0 - origX;
+            }
+        }
+
+        CGFloat origY = CGRectGetMinY(bFrame) - origH - 2.0;
+        origView.frame = CGRectMake(origX, origY, origW, origH);
+
+        UILabel *headerLbl = (UILabel *)[origView viewWithTag:101];
+        UILabel *bodyLbl = (UILabel *)[origView viewWithTag:102];
+        if (headerLbl) headerLbl.frame = CGRectMake(7, 2, origW - 14, 10);
+        if (bodyLbl) {
+            bodyLbl.frame = CGRectMake(7, 12, origW - 14, 12);
+            bodyLbl.text = origText;
+        }
+        [v bringSubviewToFront:origView];
+    } else {
+        if (origView) origView.hidden = YES;
+    }
 }
 
 static void refreshDeletedBadgesInView(UIView *view) {
@@ -517,7 +612,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
     UIView *recView = rec.view;
     if (touch && recView) {
         CGPoint loc = [touch locationInView:recView];
-        UIView *btn = [recView viewWithTag:998833] ?: [recView viewWithTag:998811];
+        UIView *btn = [recView viewWithTag:998833] ?: ([recView viewWithTag:998811] ?: ([recView viewWithTag:998855] ?: [recView viewWithTag:998866]));
         if (btn && !btn.hidden && btn.alpha > 0.05) {
             CGPoint btnLoc = [recView convertPoint:loc toView:btn];
             if ([btn pointInside:btnLoc withEvent:event]) {
@@ -573,9 +668,17 @@ static void hook() {
         kAntiSelfDestruct: @YES,
         kAntiRevoke: @YES,
         kAntiAutoDelete: @YES,
+        kAntiEdit: @YES,
     }];
 
     [[NSNotificationCenter defaultCenter] addObserverForName:@"LeadMessageDeletedRealtime" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
+        (void)note;
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            refreshDeletedBadgesInView(w);
+        }
+    }];
+
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"LeadMessageEditedRealtime" object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification * _Nonnull note) {
         (void)note;
         for (UIWindow *w in [UIApplication sharedApplication].windows) {
             refreshDeletedBadgesInView(w);

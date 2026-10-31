@@ -19,5 +19,6 @@
 - (void)handleButtonTap:(id)sender;
 - (void)handleInstantVideoDoubleTap:(UITapGestureRecognizer *)gesture;
 - (void)handleInstantVideoButtonTap:(id)sender;
+- (void)handleEditBadgeTap:(UITapGestureRecognizer *)gesture;
 
 @end

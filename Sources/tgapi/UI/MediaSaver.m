@@ -1104,4 +1104,41 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     });
 }
 
+- (void)handleEditBadgeTap:(UITapGestureRecognizer *)gesture {
+    UIView *badge = gesture.view;
+    if (!badge) return;
+    NSNumber *msgId = objc_getAssociatedObject(badge, "LeadBadgeMsgId");
+    if (!msgId) return;
+    NSString *origText = [NSClassFromString(@"TLParser") getOriginalTextForId:msgId];
+    if (!origText || origText.length == 0) {
+        origText = @"(Исходный текст не был сохранён до редактирования)";
+    }
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✏️ Изменённое сообщение"
+                                                                   message:[NSString stringWithFormat:@"Исходный текст:\n\n%@", origText]
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Скопировать исходный текст" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        (void)action;
+        [UIPasteboard generalPasteboard].string = origText;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
+    
+    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+    if (!keyWindow) {
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (w.isKeyWindow) { keyWindow = w; break; }
+        }
+    }
+    if (!keyWindow && [UIApplication sharedApplication].windows.count > 0) {
+        keyWindow = [UIApplication sharedApplication].windows.firstObject;
+    }
+    UIViewController *root = keyWindow.rootViewController;
+    while (root.presentedViewController) {
+        root = root.presentedViewController;
+    }
+    if (root) {
+        [root presentViewController:alert animated:YES completion:nil];
+    }
+}
+
 @end

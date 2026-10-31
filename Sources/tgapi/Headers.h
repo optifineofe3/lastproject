@@ -11,6 +11,9 @@
 + (NSNumber *)getMessageIdFromNode:(id)node;
 + (NSString *)getDebugDumpFromNode:(id)node;
 + (BOOL)isDeleted:(NSNumber *)msgId;
++ (BOOL)isEdited:(NSNumber *)msgId;
++ (BOOL)isNodeEdited:(id)node;
++ (NSString *)getOriginalTextForId:(NSNumber *)msgId;
 + (NSData *)stripAntiSelfDestruct:(NSData *)data;
 + (BOOL)isMessageSelfDestructing:(NSNumber *)msgId;
 + (BOOL)handleForwardRequest:(NSData *)data;

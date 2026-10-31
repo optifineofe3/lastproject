@@ -44,7 +44,25 @@ class TLParser: NSObject {
         }
     }
 
-    /// Load persisted deleted IDs from UserDefaults into memory (call once at startup).
+    // Cache of original message texts: messageId -> text
+    private static let origTextsUdKey = "LeadOriginalMessageTexts"
+    private static var _originalTexts = [Int32: String]()
+    private static var _originalTextsLoaded = false
+    private static let origTextsQueue = DispatchQueue(label: "com.lead.origTexts", attributes: .concurrent)
+
+    // Cache of edited messages: messageId -> originalText
+    private static let editedTextsUdKey = "LeadEditedOriginalTexts"
+    private static var _editedOriginalTexts = [Int32: String]()
+    private static var _editedTextsLoaded = false
+    private static let editedTextsQueue = DispatchQueue(label: "com.lead.editedTexts", attributes: .concurrent)
+
+    // Set of edited message IDs
+    private static let editedIdsUdKey = "LeadEditedMsgIds"
+    private static var _editedIds = Set<Int32>()
+    private static var _editedIdsLoaded = false
+    private static let editedIdsQueue = DispatchQueue(label: "com.lead.editedIds", attributes: .concurrent)
+
+    /// Load persisted deleted IDs and edited messages from UserDefaults into memory (call once at startup).
     @objc static func loadPersistedIds() {
         deletedQueue.async(flags: .barrier) {
             guard !_loaded else { return }
@@ -57,6 +75,155 @@ class TLParser: NSObject {
             _selfDestructLoaded = true
             let saved = (UserDefaults.standard.array(forKey: selfDestructUdKey) as? [Int32]) ?? []
             _selfDestructingMessageIds.formUnion(saved)
+        }
+        editedIdsQueue.async(flags: .barrier) {
+            guard !_editedIdsLoaded else { return }
+            _editedIdsLoaded = true
+            let saved = (UserDefaults.standard.array(forKey: editedIdsUdKey) as? [Int32]) ?? []
+            _editedIds.formUnion(saved)
+        }
+        editedTextsQueue.async(flags: .barrier) {
+            guard !_editedTextsLoaded else { return }
+            _editedTextsLoaded = true
+            if let saved = UserDefaults.standard.dictionary(forKey: editedTextsUdKey) as? [String: String] {
+                for (k, v) in saved {
+                    if let intKey = Int32(k) { _editedOriginalTexts[intKey] = v }
+                }
+            }
+        }
+    }
+
+    @objc static func recordOriginalMessage(id: Int32, text: String) {
+        guard id != 0, !text.isEmpty else { return }
+        origTextsQueue.async(flags: .barrier) {
+            if !_originalTextsLoaded {
+                _originalTextsLoaded = true
+                if let saved = UserDefaults.standard.dictionary(forKey: origTextsUdKey) as? [String: String] {
+                    for (k, v) in saved {
+                        if let intKey = Int32(k) { _originalTexts[intKey] = v }
+                    }
+                }
+            }
+            if _originalTexts[id] == nil {
+                _originalTexts[id] = text
+                var saved = (UserDefaults.standard.dictionary(forKey: origTextsUdKey) as? [String: String]) ?? [:]
+                saved[String(id)] = text
+                if saved.count > 1000 {
+                    let keysToRemove = Array(saved.keys.prefix(saved.count - 1000))
+                    for k in keysToRemove { saved.removeValue(forKey: k) }
+                }
+                UserDefaults.standard.set(saved, forKey: origTextsUdKey)
+            }
+        }
+    }
+
+    @objc static func recordEditedMessage(id: Int32, newText: String) {
+        guard id != 0 else { return }
+        
+        editedIdsQueue.async(flags: .barrier) {
+            if !_editedIdsLoaded {
+                _editedIdsLoaded = true
+                let saved = (UserDefaults.standard.array(forKey: editedIdsUdKey) as? [Int32]) ?? []
+                _editedIds.formUnion(saved)
+            }
+            _editedIds.insert(id)
+            var saved = (UserDefaults.standard.array(forKey: editedIdsUdKey) as? [Int32]) ?? []
+            if !saved.contains(id) {
+                saved.append(id)
+                if saved.count > 1000 { saved.removeFirst(saved.count - 1000) }
+                UserDefaults.standard.set(saved, forKey: editedIdsUdKey)
+            }
+        }
+
+        var origText: String?
+        origTextsQueue.sync {
+            if !_originalTextsLoaded {
+                _originalTextsLoaded = true
+                if let saved = UserDefaults.standard.dictionary(forKey: origTextsUdKey) as? [String: String] {
+                    for (k, v) in saved {
+                        if let intKey = Int32(k) { _originalTexts[intKey] = v }
+                    }
+                }
+            }
+            origText = _originalTexts[id]
+        }
+
+        if let orig = origText, orig != newText {
+            editedTextsQueue.async(flags: .barrier) {
+                if !_editedTextsLoaded {
+                    _editedTextsLoaded = true
+                    if let saved = UserDefaults.standard.dictionary(forKey: editedTextsUdKey) as? [String: String] {
+                        for (k, v) in saved {
+                            if let intKey = Int32(k) { _editedOriginalTexts[intKey] = v }
+                        }
+                    }
+                }
+                _editedOriginalTexts[id] = orig
+                var saved = (UserDefaults.standard.dictionary(forKey: editedTextsUdKey) as? [String: String]) ?? [:]
+                saved[String(id)] = orig
+                if saved.count > 1000 {
+                    let keysToRemove = Array(saved.keys.prefix(saved.count - 1000))
+                    for k in keysToRemove { saved.removeValue(forKey: k) }
+                }
+                UserDefaults.standard.set(saved, forKey: editedTextsUdKey)
+            }
+        }
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: NSNotification.Name("LeadMessageEditedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
+        }
+    }
+
+    @objc static func isEdited(_ msgId: NSNumber) -> Bool {
+        let id = msgId.int32Value
+        return editedIdsQueue.sync {
+            if !_editedIdsLoaded {
+                _editedIdsLoaded = true
+                let saved = (UserDefaults.standard.array(forKey: editedIdsUdKey) as? [Int32]) ?? []
+                _editedIds.formUnion(saved)
+            }
+            return _editedIds.contains(id)
+        }
+    }
+
+    @objc static func isNodeEdited(_ node: Any) -> Bool {
+        if let msgId = getMessageIdFromNode(node) {
+            if isEdited(msgId) { return true }
+        }
+        let nodeDesc = String(describing: node)
+        if nodeDesc.contains("EditedMessageAttribute") {
+            return true
+        }
+        var currentMirror: Mirror? = Mirror(reflecting: node)
+        while let mirror = currentMirror {
+            for child in mirror.children {
+                if child.label == "item" {
+                    let itemDesc = String(describing: child.value)
+                    if itemDesc.contains("EditedMessageAttribute") {
+                        return true
+                    }
+                }
+            }
+            currentMirror = mirror.superclassMirror
+        }
+        return false
+    }
+
+    @objc static func getOriginalTextForId(_ msgId: NSNumber) -> NSString? {
+        let id = msgId.int32Value
+        return editedTextsQueue.sync {
+            if !_editedTextsLoaded {
+                _editedTextsLoaded = true
+                if let saved = UserDefaults.standard.dictionary(forKey: editedTextsUdKey) as? [String: String] {
+                    for (k, v) in saved {
+                        if let intKey = Int32(k) { _editedOriginalTexts[intKey] = v }
+                    }
+                }
+            }
+            if let text = _editedOriginalTexts[id] {
+                return text as NSString
+            }
+            return nil
         }
     }
 
@@ -325,39 +492,9 @@ class TLParser: NSObject {
         return deletedIds.contains(msgId.int32Value)
     }
 
-    // Prepend 🗑️ to each message whose ID is in the deleted set.
+    // Deleted indicator is now rendered as a visual DEL pill badge on the cell.
     private static func applyDeletedIndicator(to msgs: [Api.Message]) -> (messages: [Api.Message], changed: Bool) {
-        let ids = deletedIds
-        guard !ids.isEmpty else { return (msgs, false) }
-        var changed = false
-        let result = msgs.map { apiMsg -> Api.Message in
-            guard case let .message(data) = apiMsg,
-                  ids.contains(data.id),
-                  !data.message.hasPrefix("🗑️") else {
-                return apiMsg
-            }
-            changed = true
-            return .message(Api.Message.Cons_message(
-                flags: data.flags, flags2: data.flags2, id: data.id, fromId: data.fromId,
-                fromBoostsApplied: data.fromBoostsApplied, fromRank: data.fromRank, peerId: data.peerId,
-                savedPeerId: data.savedPeerId, fwdFrom: data.fwdFrom,
-                viaBotId: data.viaBotId, viaBusinessBotId: data.viaBusinessBotId,
-                guestchatViaFrom: data.guestchatViaFrom,
-                replyTo: data.replyTo, date: data.date,
-                message: "🗑️ " + data.message,
-                media: data.media, replyMarkup: data.replyMarkup, entities: data.entities,
-                views: data.views, forwards: data.forwards, replies: data.replies,
-                editDate: data.editDate, postAuthor: data.postAuthor, groupedId: data.groupedId,
-                reactions: data.reactions, restrictionReason: data.restrictionReason,
-                ttlPeriod: data.ttlPeriod, quickReplyShortcutId: data.quickReplyShortcutId,
-                effect: data.effect, factcheck: data.factcheck,
-                reportDeliveryUntilDate: data.reportDeliveryUntilDate,
-                paidMessageStars: data.paidMessageStars,
-                suggestedPost: data.suggestedPost, scheduleRepeatPeriod: data.scheduleRepeatPeriod,
-                summaryFromLanguage: data.summaryFromLanguage
-            ))
-        }
-        return (result, changed)
+        return (msgs, false)
     }
     // IDs of messages that originally had a self-destruct timer (one-time media ttlSeconds)
     private static let selfDestructUdKey = "LeadSelfDestructingIds"
@@ -618,12 +755,19 @@ class TLParser: NSObject {
     }
 
     private static func stripTTLMessage(_ apiMsg: Api.Message) -> (Api.Message, Bool) {
-        guard isNoForwardsBypassActive || 
-              isAntiSelfDestructActive else { return (apiMsg, false) }
         guard case let .message(data) = apiMsg else {
             return (apiMsg, false)
         }
         
+        if data.editDate == nil {
+            recordOriginalMessage(id: data.id, text: data.message)
+        } else {
+            recordEditedMessage(id: data.id, newText: data.message)
+        }
+
+        guard isNoForwardsBypassActive || 
+              isAntiSelfDestructActive else { return (apiMsg, false) }
+
         var isDestructing = false
         if data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0 {
             isDestructing = true
@@ -706,12 +850,18 @@ class TLParser: NSObject {
             }
             return (.updateNewChannelMessage(Api.Update.Cons_updateNewChannelMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
         case let .updateEditMessage(data):
+            if case let .message(msgData) = data.message {
+                recordEditedMessage(id: msgData.id, newText: msgData.message)
+            }
             let (strippedMsg, changed) = stripTTLMessage(data.message)
             if !changed {
                 return (update, false)
             }
             return (.updateEditMessage(Api.Update.Cons_updateEditMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
         case let .updateEditChannelMessage(data):
+            if case let .message(msgData) = data.message {
+                recordEditedMessage(id: msgData.id, newText: msgData.message)
+            }
             let (strippedMsg, changed) = stripTTLMessage(data.message)
             if !changed {
                 return (update, false)
@@ -815,6 +965,7 @@ class TLParser: NSObject {
                     modified = true
                 }
             case let .updateShortMessage(data):
+                recordOriginalMessage(id: data.id, text: data.message)
                 var isDestructing = false
                 if data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0 {
                     isDestructing = true
@@ -846,6 +997,7 @@ class TLParser: NSObject {
                     modified = true
                 }
             case let .updateShortChatMessage(data):
+                recordOriginalMessage(id: data.id, text: data.message)
                 var isDestructing = false
                 if data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0 {
                     isDestructing = true
