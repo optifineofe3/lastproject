@@ -102,49 +102,109 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
 
     NSNumber *msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
     BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
+    BOOL isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
 
-    UILabel *badge = (UILabel *)[v viewWithTag:998855];
+    UILabel *delBadge = (UILabel *)[v viewWithTag:998855];
+    UILabel *editBadge = (UILabel *)[v viewWithTag:998856];
     UIView *origView = [v viewWithTag:998866];
     if (origView) origView.hidden = YES;
 
-    if (!isDel) {
-        if (badge) badge.hidden = YES;
+    if (!isDel && !isEdit) {
+        if (delBadge) delBadge.hidden = YES;
+        if (editBadge) editBadge.hidden = YES;
         return;
     }
 
-    if (!badge) {
-        badge = [[UILabel alloc] init];
-        badge.tag = 998855;
-        badge.textAlignment = NSTextAlignmentCenter;
-        badge.font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
-        badge.textColor = [UIColor whiteColor];
-        badge.backgroundColor = [UIColor colorWithRed:0.85 green:0.20 blue:0.20 alpha:0.85];
-        badge.layer.masksToBounds = YES;
-        badge.layer.zPosition = 1000;
-        badge.userInteractionEnabled = NO;
-        [v addSubview:badge];
+    if (isDel) {
+        if (!delBadge) {
+            delBadge = [[UILabel alloc] init];
+            delBadge.tag = 998855;
+            delBadge.textAlignment = NSTextAlignmentCenter;
+            delBadge.font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
+            delBadge.textColor = [UIColor whiteColor];
+            delBadge.backgroundColor = [UIColor colorWithRed:0.85 green:0.20 blue:0.20 alpha:0.90];
+            delBadge.layer.masksToBounds = YES;
+            delBadge.layer.zPosition = 1000;
+            delBadge.userInteractionEnabled = NO;
+            [v addSubview:delBadge];
+        }
+        delBadge.text = @"DEL";
+        delBadge.hidden = NO;
+        if (msgId) {
+            objc_setAssociatedObject(delBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    } else {
+        if (delBadge) delBadge.hidden = YES;
     }
 
-    badge.text = @"DEL";
-    badge.hidden = NO;
-    if (msgId) {
-        objc_setAssociatedObject(badge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (isEdit) {
+        if (!editBadge) {
+            editBadge = [[UILabel alloc] init];
+            editBadge.tag = 998856;
+            editBadge.textAlignment = NSTextAlignmentCenter;
+            editBadge.font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
+            editBadge.textColor = [UIColor whiteColor];
+            editBadge.backgroundColor = [UIColor colorWithRed:0.18 green:0.52 blue:0.92 alpha:0.90];
+            editBadge.layer.masksToBounds = YES;
+            editBadge.layer.zPosition = 1000;
+            editBadge.userInteractionEnabled = YES;
+
+            UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleEditBadgeTap:)];
+            [editBadge addGestureRecognizer:tap];
+
+            [v addSubview:editBadge];
+        }
+        editBadge.text = @"EDITED";
+        editBadge.hidden = NO;
+        if (msgId) {
+            objc_setAssociatedObject(editBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        objc_setAssociatedObject(editBadge, "TweakBadgeNode", node, OBJC_ASSOCIATION_ASSIGN);
+    } else {
+        if (editBadge) editBadge.hidden = YES;
     }
 
     CGRect bFrame = getContentFrameOfNode(node);
-    CGSize textSize = [@"DEL" sizeWithAttributes:@{NSFontAttributeName: badge.font}];
-    CGFloat badgeWidth = MAX(textSize.width + 10.0, 26.0);
     CGFloat badgeHeight = 15.0;
-    badge.layer.cornerRadius = badgeHeight / 2.0;
-
-    CGFloat x = CGRectGetMaxX(bFrame) - badgeWidth - 4.0;
-    if (x < CGRectGetMinX(bFrame) + 2.0) {
-        x = CGRectGetMinX(bFrame) + 2.0;
-    }
-    // Strictly centered vertically on the message bubble:
     CGFloat y = CGRectGetMinY(bFrame) + (bFrame.size.height - badgeHeight) / 2.0;
-    badge.frame = CGRectMake(x, y, badgeWidth, badgeHeight);
-    [v bringSubviewToFront:badge];
+
+    UIFont *font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
+    CGSize delSize = [@"DEL" sizeWithAttributes:@{NSFontAttributeName: font}];
+    CGFloat delW = MAX(delSize.width + 10.0, 26.0);
+
+    CGSize editSize = [@"EDITED" sizeWithAttributes:@{NSFontAttributeName: font}];
+    CGFloat editW = MAX(editSize.width + 10.0, 42.0);
+
+    CGFloat maxX = CGRectGetMaxX(bFrame) - 4.0;
+    CGFloat minX = CGRectGetMinX(bFrame) + 2.0;
+
+    if (isDel && isEdit) {
+        delBadge.layer.cornerRadius = badgeHeight / 2.0;
+        editBadge.layer.cornerRadius = badgeHeight / 2.0;
+
+        CGFloat editX = maxX - editW;
+        if (editX < minX) editX = minX;
+        editBadge.frame = CGRectMake(editX, y, editW, badgeHeight);
+
+        CGFloat delX = editX - delW - 3.0;
+        if (delX < minX) delX = minX;
+        delBadge.frame = CGRectMake(delX, y, delW, badgeHeight);
+
+        [v bringSubviewToFront:delBadge];
+        [v bringSubviewToFront:editBadge];
+    } else if (isDel) {
+        delBadge.layer.cornerRadius = badgeHeight / 2.0;
+        CGFloat x = maxX - delW;
+        if (x < minX) x = minX;
+        delBadge.frame = CGRectMake(x, y, delW, badgeHeight);
+        [v bringSubviewToFront:delBadge];
+    } else if (isEdit) {
+        editBadge.layer.cornerRadius = badgeHeight / 2.0;
+        CGFloat x = maxX - editW;
+        if (x < minX) x = minX;
+        editBadge.frame = CGRectMake(x, y, editW, badgeHeight);
+        [v bringSubviewToFront:editBadge];
+    }
 }
 
 static void refreshDeletedBadgesInView(UIView *view) {

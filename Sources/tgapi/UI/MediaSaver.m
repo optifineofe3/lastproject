@@ -1105,7 +1105,6 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 }
 
 + (void)showEditHistoryForNode:(id)node bFrame:(CGRect)bFrame msgId:(NSNumber *)msgId {
-    (void)msgId;
     UIWindow *window = [UIApplication sharedApplication].keyWindow;
     if (!window) {
         for (UIWindow *w in [UIApplication sharedApplication].windows) {
@@ -1122,11 +1121,33 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         [oldOverlay removeFromSuperview];
     }
 
-    NSArray *history = [NSClassFromString(@"TLParser") getEditHistoryForNode:node];
-    if (!history || history.count == 0) return;
+    NSArray *history = nil;
+    if (node) {
+        history = [NSClassFromString(@"TLParser") getEditHistoryForNode:node];
+    }
+    if (!history || history.count == 0) {
+        NSString *cachedOrig = msgId ? [NSClassFromString(@"TLParser") getOriginalTextForId:msgId] : nil;
+        if (cachedOrig && cachedOrig.length > 0) {
+            history = @[
+                @{
+                    @"badge": @"[--:--:--]",
+                    @"label": @"Исходное сообщение",
+                    @"text": cachedOrig
+                }
+            ];
+        } else {
+            history = @[
+                @{
+                    @"badge": @"[--:--:--]",
+                    @"label": @"Отредактировано",
+                    @"text": @"(Исходный текст не был сохранён до редактирования)"
+                }
+            ];
+        }
+    }
 
     UIView *nodeView = nil;
-    if ([node respondsToSelector:@selector(view)]) {
+    if (node && [node respondsToSelector:@selector(view)]) {
         SEL selView = @selector(view);
         NSMethodSignature *sig = [node methodSignatureForSelector:selView];
         if (sig) {
@@ -1139,7 +1160,6 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
             nodeView = (__bridge UIView *)retVal;
         }
     }
-    if (!nodeView) return;
 
     UIView *backdrop = [[UIView alloc] initWithFrame:window.bounds];
     backdrop.tag = 998899;
@@ -1150,9 +1170,16 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     UITapGestureRecognizer *dismissTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(dismissEditHistoryOverlay)];
     [backdrop addGestureRecognizer:dismissTap];
 
-    CGRect bubbleInWindow = [nodeView convertRect:bFrame toView:window];
     CGFloat screenW = window.bounds.size.width;
     CGFloat screenH = window.bounds.size.height;
+
+    CGRect bubbleInWindow;
+    if (nodeView && !CGRectIsEmpty(bFrame)) {
+        bubbleInWindow = [nodeView convertRect:bFrame toView:window];
+    } else {
+        bubbleInWindow = CGRectMake((screenW - 240.0) / 2.0, (screenH - 160.0) / 2.0, 240.0, 160.0);
+    }
+
     CGFloat cardW = MAX(bubbleInWindow.size.width, 240.0);
     if (cardW > screenW - 24.0) cardW = screenW - 24.0;
     if (cardW < 220.0) cardW = 220.0;
@@ -1319,38 +1346,38 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 - (void)handleEditBadgeTap:(UITapGestureRecognizer *)gesture {
     UIView *badge = gesture.view;
     if (!badge) return;
+
+    [UIView animateWithDuration:0.1 animations:^{
+        badge.transform = CGAffineTransformMakeScale(0.90, 0.90);
+    } completion:^(BOOL finished) {
+        (void)finished;
+        [UIView animateWithDuration:0.1 animations:^{
+            badge.transform = CGAffineTransformIdentity;
+        }];
+    }];
+
+    id node = objc_getAssociatedObject(badge, "TweakBadgeNode");
     NSNumber *msgId = objc_getAssociatedObject(badge, "TweakBadgeMsgId") ?: objc_getAssociatedObject(badge, "LeadBadgeMsgId");
-    if (!msgId) return;
-    NSString *origText = [NSClassFromString(@"TLParser") getOriginalTextForId:msgId];
-    if (!origText || origText.length == 0) {
-        origText = @"(Исходный текст не был сохранён до редактирования)";
-    }
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✏️ Изменённое сообщение"
-                                                                   message:[NSString stringWithFormat:@"Исходный текст:\n\n%@", origText]
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Скопировать исходный текст" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        (void)action;
-        [UIPasteboard generalPasteboard].string = origText;
-    }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleCancel handler:nil]];
-    
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    if (!keyWindow) {
-        for (UIWindow *w in [UIApplication sharedApplication].windows) {
-            if (w.isKeyWindow) { keyWindow = w; break; }
+
+    CGRect bFrame = CGRectZero;
+    if (node) {
+        SEL sel = @selector(contentFrame);
+        if ([node respondsToSelector:sel]) {
+            NSMethodSignature *sig = [node methodSignatureForSelector:sel];
+            if (sig && strcmp([sig methodReturnType], @encode(CGRect)) == 0) {
+                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                [inv setTarget:node];
+                [inv setSelector:sel];
+                [inv invoke];
+                [inv getReturnValue:&bFrame];
+            }
         }
     }
-    if (!keyWindow && [UIApplication sharedApplication].windows.count > 0) {
-        keyWindow = [UIApplication sharedApplication].windows.firstObject;
+    if (CGRectIsEmpty(bFrame)) {
+        bFrame = badge.superview ? badge.superview.bounds : badge.frame;
     }
-    UIViewController *root = keyWindow.rootViewController;
-    while (root.presentedViewController) {
-        root = root.presentedViewController;
-    }
-    if (root) {
-        [root presentViewController:alert animated:YES completion:nil];
-    }
+
+    [MediaSaver showEditHistoryForNode:node bFrame:bFrame msgId:msgId];
 }
 
 @end

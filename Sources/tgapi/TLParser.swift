@@ -187,42 +187,135 @@ class TLParser: NSObject {
         }
     }
 
-    private static func inspectNode(_ node: Any, editDate: inout Int32?, origDate: inout Int32?, currentText: inout String?) {
+    private static func unwrapOptional(_ any: Any) -> Any {
+        let mirror = Mirror(reflecting: any)
+        if mirror.displayStyle == .optional {
+            if let child = mirror.children.first {
+                return unwrapOptional(child.value)
+            }
+        }
+        return any
+    }
+
+    private static func extractFromAny(_ val: Any, depth: Int, editDate: inout Int32?, origDate: inout Int32?, currentText: inout String?, msgId: inout Int32?) {
+        guard depth < 7 else { return }
+        
+        let unwrapped = unwrapOptional(val)
+        let mirror = Mirror(reflecting: unwrapped)
+        let typeName = String(describing: type(of: unwrapped))
+        
+        if typeName.contains("EditedMessageAttribute") {
+            var isHidden = false
+            var dateVal: Int32 = 0
+            for child in mirror.children {
+                if child.label == "date", let d = child.value as? Int32 {
+                    dateVal = d
+                } else if child.label == "isHidden", let h = child.value as? Bool {
+                    isHidden = h
+                }
+            }
+            if !isHidden && dateVal > 0 {
+                editDate = dateVal
+            }
+            return
+        }
+        
+        if typeName.contains("MessageId") {
+            for child in mirror.children {
+                if child.label == "id", let idVal = child.value as? Int32 {
+                    if msgId == nil { msgId = idVal }
+                }
+            }
+        }
+        
+        for child in mirror.children {
+            let label = child.label ?? ""
+            if label == "text", let t = child.value as? String {
+                if currentText == nil && !t.isEmpty { currentText = t }
+            } else if label == "timestamp", let ts = child.value as? Int32 {
+                if origDate == nil { origDate = ts }
+            } else if label == "id", let idVal = child.value as? Int32 {
+                if msgId == nil { msgId = idVal }
+            } else if label == "attributes" || label == "content" || label == "message" || label == "firstMessage" || 
+                      label == "appliedItem" || label == "item" || label == "currentInputParams" || 
+                      label == "messages" || label.hasPrefix(".") {
+                extractFromAny(child.value, depth: depth + 1, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgId)
+            } else if mirror.displayStyle == .collection {
+                extractFromAny(child.value, depth: depth + 1, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgId)
+            }
+        }
+    }
+
+    private static func inspectNode(_ node: Any, editDate: inout Int32?, origDate: inout Int32?, currentText: inout String?, msgId: inout Int32?) {
         var currentMirror: Mirror? = Mirror(reflecting: node)
         while let mirror = currentMirror {
             for child in mirror.children {
-                if child.label == "item" {
-                    inspectAnyItem(child.value, editDate: &editDate, origDate: &origDate, currentText: &currentText)
+                let lbl = child.label ?? ""
+                if lbl == "appliedItem" || lbl == "item" || lbl == "currentInputParams" {
+                    extractFromAny(child.value, depth: 0, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgId)
                 }
             }
             currentMirror = mirror.superclassMirror
         }
-    }
 
-    private static func inspectAnyItem(_ val: Any, editDate: inout Int32?, origDate: inout Int32?, currentText: inout String?) {
-        let mirror = Mirror(reflecting: val)
-        for child in mirror.children {
-            let label = child.label ?? ""
-            if label == "text", let t = child.value as? String {
-                if currentText == nil { currentText = t }
-            } else if label == "timestamp", let ts = child.value as? Int32 {
-                if origDate == nil { origDate = ts }
-            } else if label == "attributes", let attrs = child.value as? [Any] {
-                for attr in attrs {
-                    let attrDesc = String(describing: type(of: attr))
-                    if attrDesc.contains("EditedMessageAttribute") {
-                        let attrMirror = Mirror(reflecting: attr)
-                        for ac in attrMirror.children {
-                            if ac.label == "date", let d = ac.value as? Int32 {
-                                editDate = d
-                            }
-                        }
-                    }
+        if editDate == nil || msgId == nil {
+            var m: Mirror? = Mirror(reflecting: node)
+            while let mirror = m {
+                for child in mirror.children {
+                    extractFromAny(child.value, depth: 1, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgId)
                 }
-            } else if label == "message" || label == "firstMessage" || label == "content" {
-                inspectAnyItem(child.value, editDate: &editDate, origDate: &origDate, currentText: &currentText)
+                m = mirror.superclassMirror
             }
         }
+
+        if editDate == nil {
+            var dumpStr = ""
+            dump(node, to: &dumpStr, maxDepth: 4, maxItems: 300)
+            if dumpStr.contains("EditedMessageAttribute") {
+                let pattern = "EditedMessageAttribute.*?date: (\\d+)"
+                if let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) {
+                    let nsRange = NSRange(dumpStr.startIndex..<dumpStr.endIndex, in: dumpStr)
+                    if let match = regex.firstMatch(in: dumpStr, options: [], range: nsRange),
+                       let r = Range(match.range(at: 1), in: dumpStr),
+                       let d = Int32(dumpStr[r]) {
+                        editDate = d
+                    }
+                }
+                if editDate == nil {
+                    editDate = 1
+                }
+            }
+        }
+    }
+
+    private static func checkViewsForEditedText(_ node: Any) -> Bool {
+        guard let displayNode = node as? NSObject else { return false }
+        if let isLoaded = displayNode.value(forKey: "isNodeLoaded") as? Bool, isLoaded {
+            if let v = displayNode.value(forKey: "view") as? UIView {
+                return scanViewForEdited(v, depth: 0)
+            }
+        }
+        return false
+    }
+
+    private static func scanViewForEdited(_ v: UIView, depth: Int) -> Bool {
+        guard depth < 6 else { return false }
+        if let lbl = v as? UILabel, let t = lbl.text?.lowercased() {
+            if t.contains("edited") || t.contains("изменено") {
+                return true
+            }
+        }
+        if let a11y = v.accessibilityLabel?.lowercased() {
+            if a11y.contains("edited") || a11y.contains("изменено") {
+                return true
+            }
+        }
+        for sub in v.subviews {
+            if scanViewForEdited(sub, depth: depth + 1) {
+                return true
+            }
+        }
+        return false
     }
 
     @objc static func isNodeEdited(_ node: Any) -> Bool {
@@ -232,28 +325,39 @@ class TLParser: NSObject {
         var editDate: Int32?
         var origDate: Int32?
         var currentText: String?
-        inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText)
+        var msgIdVal: Int32?
+        inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgIdVal)
+        let finalId = msgIdVal ?? getMessageIdFromNode(node)?.int32Value
         if editDate != nil {
-            if let msgId = getMessageIdFromNode(node) {
-                recordEditedMessage(id: msgId.int32Value, newText: currentText ?? "")
+            if let id = finalId {
+                recordEditedMessage(id: id, newText: currentText ?? "")
+            }
+            return true
+        }
+        if checkViewsForEditedText(node) {
+            if let id = finalId {
+                recordEditedMessage(id: id, newText: currentText ?? "")
             }
             return true
         }
         let nodeDesc = String(describing: node)
         if nodeDesc.contains("EditedMessageAttribute") {
+            if let id = finalId {
+                recordEditedMessage(id: id, newText: currentText ?? "")
+            }
             return true
         }
         return false
     }
 
     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
-        guard let msgId = getMessageIdFromNode(node) else { return [] }
-        let id = msgId.int32Value
-        
         var editDate: Int32?
         var origDate: Int32?
         var currentText: String?
-        inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText)
+        var msgIdVal: Int32?
+        inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgIdVal)
+        
+        let id = msgIdVal ?? getMessageIdFromNode(node)?.int32Value ?? 0
         
         let df = DateFormatter()
         df.dateFormat = "HH:mm:ss"
@@ -261,16 +365,18 @@ class TLParser: NSObject {
         var list: [[String: Any]] = []
         
         var origText: String?
-        editedTextsQueue.sync {
-            origText = _editedOriginalTexts[id]
-        }
-        if origText == nil {
-            origTextsQueue.sync {
-                origText = _originalTexts[id]
+        if id != 0 {
+            editedTextsQueue.sync {
+                origText = _editedOriginalTexts[id]
+            }
+            if origText == nil {
+                origTextsQueue.sync {
+                    origText = _originalTexts[id]
+                }
             }
         }
 
-        if editDate == nil, let cur = currentText, !cur.isEmpty {
+        if editDate == nil, let cur = currentText, !cur.isEmpty, id != 0 {
             recordOriginalMessage(id: id, text: cur)
         }
         
@@ -334,7 +440,8 @@ class TLParser: NSObject {
     /// Dynamically extracts message.id.id from a ChatMessageItem using string description parsing.
     /// This is safer than Mirror because it bypasses computed properties and layout differences.
     @objc static func getMessageId(from item: Any) -> NSNumber? {
-        let description = String(describing: item)
+        let unwrapped = unwrapOptional(item)
+        let description = String(describing: unwrapped)
         
         let pattern = "MessageId\\(peerId: [^,]+, namespace: [^,]+, id: (\\d+)\\)"
         if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
@@ -368,25 +475,25 @@ class TLParser: NSObject {
         }
         
         // Also try standard mirror reflection
-        let mirror = Mirror(reflecting: item)
+        let mirror = Mirror(reflecting: unwrapped)
         for child in mirror.children {
             if child.label == "message" || child.label == "firstMessage" || child.label == "content" {
                 if child.label == "content" {
-                    let contentMirror = Mirror(reflecting: child.value)
+                    let contentMirror = Mirror(reflecting: unwrapOptional(child.value))
                     for cChild in contentMirror.children {
                         if cChild.label == "firstMessage" || cChild.label == "message" {
-                            if let id = extractId(fromMessage: cChild.value) { return id }
+                            if let id = extractId(fromMessage: unwrapOptional(cChild.value)) { return id }
                         }
                     }
                 }
-                if let id = extractId(fromMessage: child.value) { return id }
+                if let id = extractId(fromMessage: unwrapOptional(child.value)) { return id }
             }
         }
         
         // Safe shallow dump. Limits depth to 5 to completely avoid the infinite recursion lag,
         // but goes deep enough to print the MessageId which is usually at depth 1 to 4.
         var dumpStr = ""
-        dump(item, to: &dumpStr, maxDepth: 5, maxItems: 200)
+        dump(unwrapped, to: &dumpStr, maxDepth: 5, maxItems: 200)
         
         let dumpPattern = "MessageId.*?id: (\\d+)"
         if let regex = try? NSRegularExpression(pattern: dumpPattern, options: [.dotMatchesLineSeparators]) {
@@ -412,10 +519,11 @@ class TLParser: NSObject {
     }
 
     private static func extractId(fromMessage msg: Any) -> NSNumber? {
-        let msgMirror = Mirror(reflecting: msg)
+        let unwrapped = unwrapOptional(msg)
+        let msgMirror = Mirror(reflecting: unwrapped)
         for msgChild in msgMirror.children {
             if msgChild.label == "id" {
-                let idMirror = Mirror(reflecting: msgChild.value)
+                let idMirror = Mirror(reflecting: unwrapOptional(msgChild.value))
                 for idChild in idMirror.children {
                     if idChild.label == "id", let idVal = idChild.value as? Int32 {
                         return NSNumber(value: idVal)
@@ -431,7 +539,8 @@ class TLParser: NSObject {
         var currentMirror: Mirror? = Mirror(reflecting: node)
         while let mirror = currentMirror {
             for child in mirror.children {
-                if child.label == "item" {
+                let lbl = child.label ?? ""
+                if lbl == "appliedItem" || lbl == "item" || lbl == "currentInputParams" {
                     if let id = getMessageId(from: child.value) {
                         return id
                     }
@@ -440,8 +549,16 @@ class TLParser: NSObject {
             currentMirror = mirror.superclassMirror
         }
         
-        // If reflection completely fails to find 'item', try parsing the node's string description.
-        // This is 100% safe (unlike dump) and might reveal the message ID if the node implements CustomStringConvertible.
+        var m: Mirror? = Mirror(reflecting: node)
+        while let mirror = m {
+            for child in mirror.children {
+                if let id = getMessageId(from: child.value) {
+                    return id
+                }
+            }
+            m = mirror.superclassMirror
+        }
+        
         let nodeDesc = String(describing: node)
         let pattern = "MessageId\\(peerId: [^,]+, namespace: [^,]+, id: (\\d+)\\)"
         if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
