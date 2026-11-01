@@ -23,6 +23,8 @@
 + (NSData *)createGetMessagesRequest:(NSData *)data;
 + (NSArray *)createSendMediaRequests:(NSData *)response originalForwardData:(NSData *)original;
 + (NSString *)findMediaFilePathFromTarget:(id)target;
++ (NSString *)findVideoFilePathFromTarget:(id)target;
++ (BOOL)isVideoFileAtPath:(NSString *)path;
 @end
 
 @interface MTRpcError : NSObject

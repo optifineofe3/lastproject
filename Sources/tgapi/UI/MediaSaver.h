@@ -19,6 +19,8 @@
 + (NSString *)lastOpenedVideoPath;
 + (NSString *)currentActivePlayingVideoPath;
 + (NSString *)findVideoPathForTarget:(id)target;
++ (NSString *)findVideoPathForTarget:(id)target controller:(UIViewController *)controller;
++ (BOOL)isPathVideoPlayable:(NSString *)path;
 + (void)startDownloadingAndSaveStoryVideoForTarget:(id)target controller:(UIViewController *)controller;
 
 - (void)handleButtonTap:(id)sender;

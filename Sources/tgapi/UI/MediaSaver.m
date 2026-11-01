@@ -1074,6 +1074,40 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     return nil;
 }
 
++ (BOOL)isPathVideoPlayable:(NSString *)path {
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path]) return NO;
+    if ([path hasSuffix:@".part"] || [path hasSuffix:@"_partial"]) return NO;
+    Class parserCls = NSClassFromString(@"TLParser");
+    if (parserCls && [parserCls respondsToSelector:@selector(isVideoFileAtPath:)]) {
+        if (![parserCls isVideoFileAtPath:path]) {
+            return NO;
+        }
+    }
+    NSString *cleanPath = [self ensureVideoExtension:path];
+    if (!cleanPath || ![[NSFileManager defaultManager] fileExistsAtPath:cleanPath]) return NO;
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:cleanPath] options:nil];
+    return asset.isPlayable;
+}
+
++ (NSString *)findVideoPathForTarget:(id)target controller:(UIViewController *)controller {
+    Class parserCls = NSClassFromString(@"TLParser");
+    if (target && parserCls && [parserCls respondsToSelector:@selector(findVideoFilePathFromTarget:)]) {
+        NSString *p = [parserCls findVideoFilePathFromTarget:target];
+        if (p) {
+            customLog2(@"[MediaSaver] findVideoPathForTarget: TLParser found: %@", p);
+            return p;
+        }
+    }
+    if (controller && parserCls && [parserCls respondsToSelector:@selector(findVideoFilePathFromTarget:)]) {
+        NSString *p = [parserCls findVideoFilePathFromTarget:controller];
+        if (p) {
+            customLog2(@"[MediaSaver] findVideoPathForTarget (controller): TLParser found: %@", p);
+            return p;
+        }
+    }
+    return [self findVideoPathForTarget:target] ?: [self findVideoPathForTarget:controller];
+}
+
 + (NSString *)findVideoPathForTarget:(id)target {
     if (!target) return nil;
     
@@ -1095,7 +1129,13 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     
     // 1. Precise binding via TLParser Swift reflection (centralItemNode / fileId / uniqueId / tempPath)
     Class parserCls = NSClassFromString(@"TLParser");
-    if (parserCls && [parserCls respondsToSelector:@selector(findMediaFilePathFromTarget:)]) {
+    if (parserCls && [parserCls respondsToSelector:@selector(findVideoFilePathFromTarget:)]) {
+        NSString *path = [parserCls findVideoFilePathFromTarget:target];
+        if (path && [fm fileExistsAtPath:path]) {
+            customLog2(@"[MediaSaver] TLParser found video path: %@", path);
+            return path;
+        }
+    } else if (parserCls && [parserCls respondsToSelector:@selector(findMediaFilePathFromTarget:)]) {
         NSString *path = [parserCls findMediaFilePathFromTarget:target];
         if (path && [fm fileExistsAtPath:path]) {
             customLog2(@"[MediaSaver] TLParser found path: %@", path);
@@ -1258,15 +1298,13 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     
     customLog2(@"[MediaSaver] startDownloadingAndSaveStoryVideo: target=%@, controller=%@", NSStringFromClass([target class]), NSStringFromClass([controller class]));
 
-    // 1. If already completely on disk, save directly
-    NSString *immediatePath = [self findVideoPathForTarget:target] ?: [self findVideoPathForTarget:controller];
+    // 1. If already complete and playable on disk, save directly
+    NSString *immediatePath = [self findVideoPathForTarget:target controller:controller];
     customLog2(@"[MediaSaver] immediatePath check: %@", immediatePath);
-    if (immediatePath && [[NSFileManager defaultManager] fileExistsAtPath:immediatePath]) {
-        if (![immediatePath hasSuffix:@"_partial"]) {
-            customLog2(@"[MediaSaver] immediate complete video found on disk! Saving directly: %@", immediatePath);
-            [self saveVideoToPhotos:immediatePath];
-            return;
-        }
+    if (immediatePath && [self isPathVideoPlayable:immediatePath]) {
+        customLog2(@"[MediaSaver] immediate complete playable video found on disk! Saving directly: %@", immediatePath);
+        [self saveVideoToPhotos:immediatePath];
+        return;
     }
     
     // 2. Trigger high priority fetch on UniversalVideoNode if possible
@@ -1292,29 +1330,27 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     
     // 3. Inform user that video download is in progress
     isStoryDownloadingVideo = YES;
-    [self showToast:@"Downloading video, please wait..." success:NO];
+    [self showToast:@"Downloading video, please wait..." success:YES];
     
-    // 4. Background polling worker
+    // 4. Background polling worker (up to 35 seconds)
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        int maxAttempts = 35; // ~12 seconds
+        int maxAttempts = 35;
         int64_t lastSize = -1;
         int stableCount = 0;
+        NSString *lastPath = nil;
         
-        for (int i = 0; i < maxAttempts; i++) {
-            [NSThread sleepForTimeInterval:0.35];
+        for (int i = 1; i <= maxAttempts; i++) {
+            [NSThread sleepForTimeInterval:1.0];
             
-            NSString *path = [MediaSaver findVideoPathForTarget:target] ?: [MediaSaver findVideoPathForTarget:controller];
+            // Re-trigger fetch periodically to ensure high priority download
+            if (i % 4 == 0 && fetchControlFn && vn) {
+                @try { fetchControlFn((__bridge void *)vn, 0); } @catch (...) {}
+            }
+            
+            NSString *path = [MediaSaver findVideoPathForTarget:target controller:controller];
             if (path && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
-                BOOL isPartial = [path hasSuffix:@"_partial"];
-                NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
-                int64_t currentSize = [attrs[NSFileSize] longLongValue];
-                
-                if (i % 5 == 0 || i >= maxAttempts - 3) {
-                    customLog2(@"[MediaSaver] Poll #%d: found path = %@, size = %lld, isPartial = %d", i, path, currentSize, isPartial);
-                }
-                
-                if (!isPartial && currentSize >= 40 * 1024) {
-                    customLog2(@"[MediaSaver] Poll #%d: complete file ready! Saving to Photos: %@", i, path);
+                if ([MediaSaver isPathVideoPlayable:path]) {
+                    customLog2(@"[MediaSaver] Poll #%d: complete playable video found: %@", i, path);
                     isStoryDownloadingVideo = NO;
                     dispatch_async(dispatch_get_main_queue(), ^{
                         [MediaSaver saveVideoToPhotos:path];
@@ -1322,29 +1358,30 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
                     return;
                 }
                 
-                if (isPartial && currentSize >= 100 * 1024) {
-                    if (currentSize == lastSize) {
+                NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
+                int64_t currentSize = [attrs[NSFileSize] longLongValue];
+                if (currentSize > 0) {
+                    if (currentSize == lastSize && [path isEqualToString:lastPath]) {
                         stableCount++;
                     } else {
                         stableCount = 0;
                         lastSize = currentSize;
+                        lastPath = path;
                     }
                     
-                    if (stableCount >= 3 || i >= 28) {
+                    if (i % 3 == 0 || stableCount > 0) {
+                        customLog2(@"[MediaSaver] Poll #%d: path=%@, size=%lld, stableCount=%d", i, path, currentSize, stableCount);
+                    }
+                    
+                    if (stableCount >= 3 && currentSize >= 100 * 1024) {
                         NSString *tmpPath = [MediaSaver ensureVideoExtension:path];
-                        customLog2(@"[MediaSaver] Poll #%d: partial file stable (%lld bytes, stableCount %d), checking playable at %@", i, currentSize, stableCount, tmpPath);
-                        if (tmpPath && [[NSFileManager defaultManager] fileExistsAtPath:tmpPath]) {
-                            AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:tmpPath] options:nil];
-                            if (asset.isPlayable) {
-                                customLog2(@"[MediaSaver] Partial video is playable! Saving to Photos: %@", tmpPath);
-                                isStoryDownloadingVideo = NO;
-                                dispatch_async(dispatch_get_main_queue(), ^{
-                                    [MediaSaver saveVideoToPhotos:tmpPath];
-                                });
-                                return;
-                            } else {
-                                customLog2(@"[MediaSaver] Partial video not playable yet");
-                            }
+                        if (tmpPath && [MediaSaver isPathVideoPlayable:tmpPath]) {
+                            customLog2(@"[MediaSaver] Stable video file playable! Saving: %@", tmpPath);
+                            isStoryDownloadingVideo = NO;
+                            dispatch_async(dispatch_get_main_queue(), ^{
+                                [MediaSaver saveVideoToPhotos:tmpPath];
+                            });
+                            return;
                         }
                     }
                 }
@@ -1355,21 +1392,15 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
             }
         }
         
-        NSString *finalPath = [MediaSaver findVideoPathForTarget:target] ?: [MediaSaver findVideoPathForTarget:controller];
+        NSString *finalPath = [MediaSaver findVideoPathForTarget:target controller:controller];
         customLog2(@"[MediaSaver] Polling finished after %d attempts. finalPath: %@", maxAttempts, finalPath);
-        if (finalPath && [[NSFileManager defaultManager] fileExistsAtPath:finalPath]) {
-            NSString *tmpPath = [MediaSaver ensureVideoExtension:finalPath];
-            if (tmpPath) {
-                AVURLAsset *asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:tmpPath] options:nil];
-                if (asset.isPlayable) {
-                    customLog2(@"[MediaSaver] finalPath playable at timeout, saving: %@", tmpPath);
-                    isStoryDownloadingVideo = NO;
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        [MediaSaver saveVideoToPhotos:tmpPath];
-                    });
-                    return;
-                }
-            }
+        if (finalPath && [MediaSaver isPathVideoPlayable:finalPath]) {
+            customLog2(@"[MediaSaver] finalPath playable at timeout, saving: %@", finalPath);
+            isStoryDownloadingVideo = NO;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [MediaSaver saveVideoToPhotos:finalPath];
+            });
+            return;
         }
         
         customLog2(@"[MediaSaver] Video download timed out. Displaying timeout toast.");

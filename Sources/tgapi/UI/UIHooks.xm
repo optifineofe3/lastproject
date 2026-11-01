@@ -63,6 +63,21 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 @end
 
 static CGRect getContentFrameOfNode(ASDisplayNode *node) {
+    if (!node) return CGRectZero;
+    UIView *rootV = node.view;
+    @try {
+        id bgNode = [node valueForKey:@"backgroundNode"];
+        if (bgNode && [bgNode isKindOfClass:[ASDisplayNode class]]) {
+            UIView *bgView = [(ASDisplayNode *)bgNode view];
+            if (bgView && rootV) {
+                CGRect r = [rootV convertRect:bgView.bounds fromView:bgView];
+                if (!CGRectIsEmpty(r) && !CGRectIsNull(r)) {
+                    return r;
+                }
+            }
+        }
+    } @catch (NSException *e) {}
+
     if ([node respondsToSelector:@selector(contentFrame)]) {
         SEL sel = @selector(contentFrame);
         NSMethodSignature *sig = [node methodSignatureForSelector:sel];
@@ -81,8 +96,44 @@ static CGRect getContentFrameOfNode(ASDisplayNode *node) {
     return node.bounds;
 }
 
+static BOOL isMainMessageNode(ASDisplayNode *node) {
+    if (!node) return NO;
+    NSString *className = NSStringFromClass([node class]);
+    if (![className containsString:@"ChatMessage"]) return NO;
+    if ([className containsString:@"Content"]) return NO;
+    if ([className containsString:@"Button"]) return NO;
+    if ([className containsString:@"Accessory"]) return NO;
+    if ([className containsString:@"AuthorContext"]) return NO;
+    if ([className containsString:@"TodoItemNode"]) return NO;
+    if ([className containsString:@"BubbleItemNode"] || [className containsString:@"ChatMessageItemView"] || [className containsString:@"AnimatedStickerItemNode"] || [className containsString:@"StickerItemNode"] || [className containsString:@"InstantVideoItemNode"]) {
+        return YES;
+    }
+    return NO;
+}
+
+static BOOL doesNodeHaveMedia(ASDisplayNode *node) {
+    if (!node) return NO;
+    NSString *className = NSStringFromClass([node class]);
+    if ([className containsString:@"Media"] || [className containsString:@"InstantVideo"] || [className containsString:@"Sticker"]) {
+        return YES;
+    }
+    @try {
+        id contentNodes = [node valueForKey:@"contentNodes"];
+        if ([contentNodes isKindOfClass:[NSArray class]]) {
+            for (id subNode in (NSArray *)contentNodes) {
+                NSString *subCls = NSStringFromClass([subNode class]);
+                if ([subCls containsString:@"Media"] || [subCls containsString:@"File"] || [subCls containsString:@"InstantVideo"] || [subCls containsString:@"Image"] || [subCls containsString:@"Poll"]) {
+                    return YES;
+                }
+            }
+        }
+    } @catch (NSException *e) {}
+    return NO;
+}
+
 static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     if (!node || !node.isNodeLoaded) return;
+    if (!isMainMessageNode(node)) return;
     UIView *v = node.view;
     if (!v) return;
 
@@ -104,8 +155,29 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
     BOOL isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
 
-    UILabel *delBadge = (UILabel *)[v viewWithTag:998855];
-    UILabel *editBadge = (UILabel *)[v viewWithTag:998856];
+    // Find direct badges on v and remove any duplicates or rogue badges in subviews
+    UILabel *delBadge = nil;
+    UILabel *editBadge = nil;
+    NSMutableArray<UIView *> *extraBadges = [NSMutableArray array];
+    for (UIView *sub in v.subviews) {
+        if (sub.tag == 998855) {
+            if (!delBadge && [sub isKindOfClass:[UILabel class]]) {
+                delBadge = (UILabel *)sub;
+            } else {
+                [extraBadges addObject:sub];
+            }
+        } else if (sub.tag == 998856) {
+            if (!editBadge && [sub isKindOfClass:[UILabel class]]) {
+                editBadge = (UILabel *)sub;
+            } else {
+                [extraBadges addObject:sub];
+            }
+        }
+    }
+    for (UIView *extra in extraBadges) {
+        [extra removeFromSuperview];
+    }
+
     UIView *origView = [v viewWithTag:998866];
     if (origView) origView.hidden = YES;
 
@@ -154,7 +226,6 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
 
             [v addSubview:editBadge];
         }
-        editBadge.text = @"EDITED";
         editBadge.hidden = NO;
         if (msgId) {
             objc_setAssociatedObject(editBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -166,26 +237,30 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
 
     CGRect bFrame = getContentFrameOfNode(node);
     CGFloat badgeHeight = 15.0;
-    CGFloat y = CGRectGetMinY(bFrame) + (bFrame.size.height - badgeHeight) / 2.0;
 
-    CGFloat maxX = CGRectGetMaxX(bFrame) - 4.0;
-    CGFloat minX = CGRectGetMinX(bFrame) + 2.0;
+    BOOL hasMedia = doesNodeHaveMedia(node);
+    BOOL isLarge = hasMedia || (bFrame.size.height >= 90.0);
 
-    UIFont *font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
-    CGSize delSize = [@"DEL" sizeWithAttributes:@{NSFontAttributeName: font}];
-    CGFloat delW = MAX(delSize.width + 10.0, 26.0);
+    CGFloat maxX = CGRectGetMaxX(bFrame) - 6.0;
+    CGFloat minX = CGRectGetMinX(bFrame) + 6.0;
 
-    BOOL isLarge = (bFrame.size.height >= 44.0 || bFrame.size.width >= 200.0);
-    if (isDel && isEdit && (maxX - minX < 120.0)) {
+    if (isDel && isEdit && (maxX - minX < 110.0)) {
         isLarge = YES;
     }
+
     NSString *editText = isLarge ? @"EDT" : @"EDITED";
     if (editBadge) {
         editBadge.text = editText;
     }
 
+    UIFont *font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
+    CGSize delSize = [@"DEL" sizeWithAttributes:@{NSFontAttributeName: font}];
+    CGFloat delW = MAX(delSize.width + 10.0, 26.0);
+
     CGSize editSize = [editText sizeWithAttributes:@{NSFontAttributeName: font}];
-    CGFloat editW = MAX(editSize.width + 8.0, isLarge ? 26.0 : 42.0);
+    CGFloat editW = MAX(editSize.width + (isLarge ? 8.0 : 10.0), isLarge ? 26.0 : 42.0);
+
+    CGFloat y = isLarge ? (CGRectGetMinY(bFrame) + 6.0) : (CGRectGetMinY(bFrame) + (bFrame.size.height - badgeHeight) / 2.0);
 
     if (isDel && isEdit) {
         delBadge.layer.cornerRadius = badgeHeight / 2.0;
@@ -247,7 +322,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
             [v addGestureRecognizer:doubleTap];
         }
         [MediaSaver attachInstantVideoButtonToNode:self];
-    } else if ([className containsString:@"ChatMessage"] && [className containsString:@"Item"] && ![className containsString:@"Content"]) {
+    } else if (isMainMessageNode(self)) {
         updateDeletedBadgeForNode(self);
     }
 }
@@ -257,7 +332,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
     NSString *className = NSStringFromClass([self class]);
     if ([className containsString:@"InstantVideo"] || [className containsString:@"OverlayInstantVideoNode"]) {
         [MediaSaver attachInstantVideoButtonToNode:self];
-    } else if ([className containsString:@"ChatMessage"] && [className containsString:@"Item"] && ![className containsString:@"Content"]) {
+    } else if (isMainMessageNode(self)) {
         updateDeletedBadgeForNode(self);
     }
 }
