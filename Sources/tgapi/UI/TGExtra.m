@@ -16,7 +16,6 @@
 	[super viewDidLoad];
 
 	[self setupTableView];
-	[self setupIconAsHeader];
 	[self setupApplyButton];
 	self.title = @"Tweak";
 
@@ -49,31 +48,6 @@
 		[self.tableView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
 		[self.tableView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
 	]];
-}
-
-- (void)setupIconAsHeader {
-    UIView *logoContainer = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.tableView.frame.size.width, 110)];
-
-    UIImageView *iconView = [[UIImageView alloc] init];
-    iconView.translatesAutoresizingMaskIntoConstraints = NO;
-    UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:40 weight:UIImageSymbolWeightMedium];
-    iconView.image = [UIImage systemImageNamed:@"slider.horizontal.3" withConfiguration:config];
-    iconView.tintColor = [UIColor systemBlueColor];
-    iconView.contentMode = UIViewContentModeCenter;
-    iconView.backgroundColor = [[UIColor systemBlueColor] colorWithAlphaComponent:0.12];
-    iconView.layer.cornerRadius = 22;
-    iconView.clipsToBounds = YES;
-
-    [logoContainer addSubview:iconView];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [iconView.centerYAnchor constraintEqualToAnchor:logoContainer.centerYAnchor],
-        [iconView.centerXAnchor constraintEqualToAnchor:logoContainer.centerXAnchor],
-        [iconView.widthAnchor constraintEqualToConstant:76],
-        [iconView.heightAnchor constraintEqualToConstant:76]
-    ]];
-
-    self.tableView.tableHeaderView = logoContainer;
 }
 
 - (void)setupApplyButton {
