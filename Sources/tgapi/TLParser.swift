@@ -1976,8 +1976,24 @@ class TLParser: NSObject {
                 }
             }
         } else if let view = target as? UIView {
+            if let vn = safeGetProperty(view as AnyObject, "videoNode") {
+                objectsToInspect.append(vn)
+            }
+            if let node = safeGetProperty(view as AnyObject, "asyncdisplaykit_node") {
+                objectsToInspect.append(node)
+                if let vn = safeGetProperty(node as AnyObject, "videoNode") {
+                    objectsToInspect.append(vn)
+                }
+            }
             objectsToInspect.append(view)
-            collectNodesAndViews(from: view, into: &objectsToInspect)
+            if objectsToInspect.count <= 2 {
+                for sub in view.subviews.prefix(8) {
+                    objectsToInspect.append(sub)
+                    if let vn = safeGetProperty(sub as AnyObject, "videoNode") {
+                        objectsToInspect.append(vn)
+                    }
+                }
+            }
         } else {
             if isVideoOnly && (targetCls.contains("Image") || targetCls.contains("Photo")) {
                 customLogMsg("[TLParser] target is Image/Photo, skipping")
@@ -1985,24 +2001,17 @@ class TLParser: NSObject {
             }
             objectsToInspect.append(target)
             if let obj = target as? NSObject {
-                if let tNode = safeGetProperty(obj, "targetNode") {
-                    objectsToInspect.insert(tNode, at: 0)
-                }
-                if let tController = safeGetProperty(obj, "targetController") {
-                    objectsToInspect.insert(tController, at: 0)
-                }
-                if let v = safeGetProperty(obj, "view") as? UIView {
-                    objectsToInspect.append(v)
-                    collectNodesAndViews(from: v, into: &objectsToInspect)
-                }
-                if let item = safeGetProperty(obj, "item") {
-                    objectsToInspect.insert(item, at: 0)
-                }
                 if let vNode = safeGetProperty(obj, "videoNode") {
                     objectsToInspect.insert(vNode, at: 0)
                 }
                 if let media = safeGetProperty(obj, "media") {
                     objectsToInspect.insert(media, at: 0)
+                }
+                if let item = safeGetProperty(obj, "item") {
+                    objectsToInspect.insert(item, at: 0)
+                }
+                if let v = safeGetProperty(obj, "view") as? UIView {
+                    objectsToInspect.append(v)
                 }
             }
         }
@@ -2036,7 +2045,9 @@ class TLParser: NSObject {
         let folders = collectMediaFolders()
         customLogMsg("[TLParser] scanning \(folders.count) media folders")
 
-        // 2. Check exact uniqueIds in storage folders
+        var partialCandidates: [(path: String, size: UInt64, modDate: Date)] = []
+
+        // 2. Check exact uniqueIds in storage folders - PASS 1: COMPLETE FILES FIRST
         for folder in folders {
             for uid in uniqueIds {
                 if isVideoOnly && (uid.contains("photo") || uid.contains("photo-size")) {
@@ -2055,18 +2066,17 @@ class TLParser: NSObject {
                 if fm.fileExists(atPath: partial),
                    let attrs = try? fm.attributesOfItem(atPath: partial),
                    let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
-                    customLogMsg("[TLParser] matched partial uniqueId file: \(partial) (size: \(size))")
-                    return partial
+                    let modDate = (attrs[.modificationDate] as? Date) ?? Date.distantPast
+                    partialCandidates.append((path: partial, size: size, modDate: modDate))
                 }
             }
         }
 
-        // 3. Search for fileId in filenames in storage folders
+        // 3. Search for fileId in filenames in storage folders - PASS 1: COMPLETE FILES FIRST
         for fid in fileIds {
             let fidStr = String(fid)
             for folder in folders {
                 guard let items = try? fm.contentsOfDirectory(atPath: folder) else { continue }
-                var partialCandidate: String? = nil
                 for item in items {
                     if item.contains(fidStr) {
                         if item.hasSuffix(".meta") || item.hasSuffix(".lock") || item.hasSuffix(".json") { continue }
@@ -2082,9 +2092,8 @@ class TLParser: NSObject {
                                 customLogMsg("[TLParser] matched non-partial file from partial fid: \(nonPartialFull) (size: \(size))")
                                 return nonPartialFull
                             }
-                            if partialCandidate == nil {
-                                partialCandidate = full
-                            }
+                            let modDate = (attrs[.modificationDate] as? Date) ?? Date.distantPast
+                            partialCandidates.append((path: full, size: size, modDate: modDate))
                         } else {
                             if !isVideoOnly || isVideoFile(atPath: full) {
                                 // Non-partial complete file!
@@ -2094,11 +2103,20 @@ class TLParser: NSObject {
                         }
                     }
                 }
-                if let candidate = partialCandidate {
-                    customLogMsg("[TLParser] matched partial candidate for fid \(fidStr): \(candidate)")
-                    return candidate
-                }
             }
+        }
+
+        // 4. If no complete file found across all folders and IDs, pick the best partial candidate (most recently modified and largest)
+        if !partialCandidates.isEmpty {
+            partialCandidates.sort { a, b in
+                if a.modDate != b.modDate {
+                    return a.modDate > b.modDate
+                }
+                return a.size > b.size
+            }
+            let best = partialCandidates[0]
+            customLogMsg("[TLParser] matched best partial candidate (modDate: \(best.modDate), size: \(best.size)): \(best.path)")
+            return best.path
         }
 
         customLogMsg("[TLParser] findMediaFilePath: no match found")
@@ -2116,7 +2134,15 @@ class TLParser: NSObject {
     }
 
     private static func extractMediaInfo(from obj: Any, visited: inout Set<ObjectIdentifier>, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String], isVideoSearch: Bool = false, depth: Int = 0) {
-        if depth > 12 { return }
+        if depth > 6 { return }
+
+        let typeStr = String(describing: type(of: obj))
+        if typeStr.contains("AccountContext") || typeStr.contains("Account") || typeStr.contains("Postbox") ||
+           typeStr.contains("TelegramEngine") || typeStr.contains("ManagedAudioSession") || typeStr.contains("PresentationStrings") ||
+           typeStr.contains("LiveChat") || typeStr.contains("Signal") || typeStr.contains("Disposable") ||
+           typeStr.contains("Peer") || typeStr.contains("ChatList") || typeStr.contains("History") {
+            return
+        }
 
         if type(of: obj) is AnyClass {
             let id = ObjectIdentifier(obj as AnyObject)
@@ -2125,18 +2151,30 @@ class TLParser: NSObject {
         }
 
         let desc = String(describing: obj)
-        parseIdentifiers(fromText: desc, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths, isVideoSearch: isVideoSearch)
+        if desc.count < 10000 {
+            parseIdentifiers(fromText: desc, fileIds: &fileIds, uniqueIds: &uniqueIds, tempPaths: &tempPaths, isVideoSearch: isVideoSearch)
+        }
 
         var currentMirror: Mirror? = Mirror(reflecting: obj)
         var mirrorDepth = 0
-        while let mirror = currentMirror, mirrorDepth < 5 {
+        while let mirror = currentMirror, mirrorDepth < 4 {
             mirrorDepth += 1
             for child in mirror.children {
-                let label = child.label ?? ""
+                let label = (child.label ?? "").lowercased()
 
-                if label == "tempFilePath", let path = child.value as? String, !path.isEmpty {
+                if label == "context" || label == "account" || label == "postbox" || label == "sharedcontext" ||
+                   label == "manager" || label == "universalvideomanager" || label == "engine" || label == "audiosession" ||
+                   label == "livechat" || label == "livechatstate" || label == "peer" || label == "strings" ||
+                   label == "navigationcontroller" || label == "window" || label == "delegate" || label == "targetcontroller" ||
+                   label == "parent" || label == "controller" || label == "audiomode" || label == "baserate" ||
+                   label == "canmanagelivechatmessagesfrompeers" || label == "disposables" || label == "fetchdisposable" ||
+                   label == "prioritydisposable" || label == "videoprogressdisposable" {
+                    continue
+                }
+
+                if label == "tempfilepath", let path = child.value as? String, !path.isEmpty {
                     if !tempPaths.contains(path) { tempPaths.append(path) }
-                } else if label == "fileId" {
+                } else if label == "fileid" {
                     if let fid = child.value as? Int64, fid != 0 {
                         if !fileIds.contains(fid) { fileIds.append(fid) }
                     } else if let fid = child.value as? Int32, fid != 0 {
@@ -2150,9 +2188,9 @@ class TLParser: NSObject {
                             }
                         }
                     }
-                } else if (label == "id" || label == "documentId"), let idVal = child.value as? Int64, idVal > 1000000 {
+                } else if (label == "id" || label == "documentid"), let idVal = child.value as? Int64, idVal > 1000000 {
                     if !fileIds.contains(idVal) { fileIds.append(idVal) }
-                } else if (label == "stringRepresentation" || label == "uniqueId"), let strVal = child.value as? String, !strVal.isEmpty {
+                } else if (label == "stringrepresentation" || label == "uniqueid"), let strVal = child.value as? String, !strVal.isEmpty {
                     if strVal.hasPrefix("telegram-") || strVal.hasPrefix("local-") || strVal.hasPrefix("secret-") {
                         if isVideoSearch && (strVal.contains("photo") || strVal.contains("photo-size")) {
                             // Skip photo
@@ -2168,8 +2206,14 @@ class TLParser: NSObject {
                     }
                 }
 
-                // Skip primitives to avoid useless reflection
                 let childVal = child.value
+                let childTypeStr = String(describing: type(of: childVal))
+                if childTypeStr.contains("AccountContext") || childTypeStr.contains("Account") || childTypeStr.contains("Postbox") ||
+                   childTypeStr.contains("Engine") || childTypeStr.contains("Manager") || childTypeStr.contains("AudioSession") {
+                    continue
+                }
+
+                // Skip primitives to avoid useless reflection
                 let childType = type(of: childVal)
                 if childType is Int.Type || childType is Int32.Type || childType is Int64.Type ||
                    childType is UInt.Type || childType is UInt32.Type || childType is UInt64.Type ||
@@ -2178,7 +2222,7 @@ class TLParser: NSObject {
                     continue
                 }
                 // Avoid recursing deep into arbitrary UIViews
-                if childVal is UIView && depth > 2 {
+                if childVal is UIView && depth > 1 {
                     continue
                 }
 

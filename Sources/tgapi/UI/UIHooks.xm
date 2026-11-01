@@ -131,6 +131,41 @@ static BOOL doesNodeHaveMedia(ASDisplayNode *node) {
     return NO;
 }
 
+static void cleanRogueBadges(UIView *view, UIView *keepDel, UIView *keepEdit) {
+    if (!view) return;
+    for (UIView *sub in [view.subviews copy]) {
+        if (sub.tag == 998855 && sub != keepDel) {
+            [sub removeFromSuperview];
+        } else if (sub.tag == 998856 && sub != keepEdit) {
+            [sub removeFromSuperview];
+        } else {
+            cleanRogueBadges(sub, keepDel, keepEdit);
+        }
+    }
+}
+
+static NSString *getNodeText(ASDisplayNode *node) {
+    if (!node || !node.isNodeLoaded) return nil;
+    UIView *v = node.view;
+    if (!v) return nil;
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:v];
+    while (queue.count > 0) {
+        UIView *cur = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        if (cur.tag == 998855 || cur.tag == 998856 || cur.tag == 998866 || cur.tag == 998811 || cur.tag == 998850) continue;
+        if ([cur isKindOfClass:[UILabel class]]) {
+            NSString *t = [(UILabel *)cur text];
+            if (t.length > 0 && ![t isEqualToString:@"DEL"] && ![t isEqualToString:@"EDT"] && ![t isEqualToString:@"EDITED"]) {
+                return t;
+            }
+        }
+        for (UIView *sub in cur.subviews) {
+            [queue addObject:sub];
+        }
+    }
+    return nil;
+}
+
 static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     if (!node || !node.isNodeLoaded) return;
     if (!isMainMessageNode(node)) return;
@@ -177,6 +212,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     for (UIView *extra in extraBadges) {
         [extra removeFromSuperview];
     }
+    cleanRogueBadges(v, delBadge, editBadge);
 
     UIView *origView = [v viewWithTag:998866];
     if (origView) origView.hidden = YES;
@@ -236,58 +272,99 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     }
 
     CGRect bFrame = getContentFrameOfNode(node);
-    CGFloat badgeHeight = 15.0;
+    CGFloat badgeHeight = 13.5;
 
     BOOL hasMedia = doesNodeHaveMedia(node);
-    BOOL isLarge = hasMedia || (bFrame.size.height >= 90.0);
+    BOOL isMultiLine = hasMedia || (bFrame.size.height > 52.0);
 
-    CGFloat maxX = CGRectGetMaxX(bFrame) - 6.0;
-    CGFloat minX = CGRectGetMinX(bFrame) + 6.0;
+    CGFloat maxX = CGRectGetMaxX(bFrame) - 5.0;
+    CGFloat minX = CGRectGetMinX(bFrame) + 5.0;
 
-    if (isDel && isEdit && (maxX - minX < 110.0)) {
-        isLarge = YES;
+    // Check single-line crowding: if bubble text is long (~26+ chars) or width is large (>= 210 pt)
+    BOOL isSingleLineCrowded = NO;
+    if (!isMultiLine && isDel && isEdit) {
+        NSString *nodeText = nil;
+        if (msgId) {
+            nodeText = (NSString *)[NSClassFromString(@"TLParser") getOriginalTextForId:msgId];
+        }
+        if (!nodeText) {
+            nodeText = getNodeText(node);
+        }
+        if ((nodeText && nodeText.length >= 26) || bFrame.size.width >= 210.0 || (maxX - minX < 120.0)) {
+            isSingleLineCrowded = YES;
+        }
     }
 
-    NSString *editText = isLarge ? @"EDT" : @"EDITED";
+    // Stacked mode applies when both badges exist on multi-line/media OR crowded single-line
+    BOOL shouldStack = (isDel && isEdit) && (isMultiLine || isSingleLineCrowded);
+
+    // Edit badge text: EDT when stacked, multi-line, or compact bubble; EDITED on uncrowded single-line
+    NSString *editText = (shouldStack || isMultiLine || bFrame.size.width < 140.0) ? @"EDT" : @"EDITED";
     if (editBadge) {
         editBadge.text = editText;
     }
 
     UIFont *font = [UIFont systemFontOfSize:8.5 weight:UIFontWeightBold];
     CGSize delSize = [@"DEL" sizeWithAttributes:@{NSFontAttributeName: font}];
-    CGFloat delW = MAX(delSize.width + 10.0, 26.0);
+    CGFloat delW = MAX(delSize.width + 8.0, 26.0);
 
     CGSize editSize = [editText sizeWithAttributes:@{NSFontAttributeName: font}];
-    CGFloat editW = MAX(editSize.width + (isLarge ? 8.0 : 10.0), isLarge ? 26.0 : 42.0);
+    CGFloat editW = MAX(editSize.width + 8.0, 26.0);
 
-    CGFloat y = isLarge ? (CGRectGetMinY(bFrame) + 6.0) : (CGRectGetMinY(bFrame) + (bFrame.size.height - badgeHeight) / 2.0);
+    CGFloat centerY = CGRectGetMidY(bFrame);
 
-    if (isDel && isEdit) {
+    if (shouldStack) {
+        // Stacked vertically: DEL on top, EDT on bottom, centered vertically on message bubble
+        CGFloat stackGap = 2.0;
+        CGFloat totalHeight = badgeHeight * 2.0 + stackGap;
+        CGFloat startY = centerY - totalHeight / 2.0;
+
         delBadge.layer.cornerRadius = badgeHeight / 2.0;
         editBadge.layer.cornerRadius = badgeHeight / 2.0;
+
+        CGFloat delX = maxX - delW;
+        if (delX < minX) delX = minX;
+        delBadge.frame = CGRectMake(delX, startY, delW, badgeHeight);
 
         CGFloat editX = maxX - editW;
         if (editX < minX) editX = minX;
-        editBadge.frame = CGRectMake(editX, y, editW, badgeHeight);
-
-        CGFloat delX = editX - delW - 3.0;
-        if (delX < minX) delX = minX;
-        delBadge.frame = CGRectMake(delX, y, delW, badgeHeight);
+        editBadge.frame = CGRectMake(editX, startY + badgeHeight + stackGap, editW, badgeHeight);
 
         [v bringSubviewToFront:delBadge];
         [v bringSubviewToFront:editBadge];
-    } else if (isDel) {
-        delBadge.layer.cornerRadius = badgeHeight / 2.0;
-        CGFloat x = maxX - delW;
-        if (x < minX) x = minX;
-        delBadge.frame = CGRectMake(x, y, delW, badgeHeight);
-        [v bringSubviewToFront:delBadge];
-    } else if (isEdit) {
-        editBadge.layer.cornerRadius = badgeHeight / 2.0;
-        CGFloat x = maxX - editW;
-        if (x < minX) x = minX;
-        editBadge.frame = CGRectMake(x, y, editW, badgeHeight);
-        [v bringSubviewToFront:editBadge];
+    } else {
+        CGFloat y = centerY - badgeHeight / 2.0;
+
+        if (isDel && isEdit) {
+            // Side-by-side on short single-line message
+            delBadge.layer.cornerRadius = badgeHeight / 2.0;
+            editBadge.layer.cornerRadius = badgeHeight / 2.0;
+
+            CGFloat editX = maxX - editW;
+            if (editX < minX) editX = minX;
+            editBadge.frame = CGRectMake(editX, y, editW, badgeHeight);
+
+            CGFloat delX = editX - delW - 3.0;
+            if (delX < minX) delX = minX;
+            delBadge.frame = CGRectMake(delX, y, delW, badgeHeight);
+
+            [v bringSubviewToFront:delBadge];
+            [v bringSubviewToFront:editBadge];
+        } else if (isDel) {
+            // Single DEL badge, centered vertically
+            delBadge.layer.cornerRadius = badgeHeight / 2.0;
+            CGFloat x = maxX - delW;
+            if (x < minX) x = minX;
+            delBadge.frame = CGRectMake(x, y, delW, badgeHeight);
+            [v bringSubviewToFront:delBadge];
+        } else if (isEdit) {
+            // Single EDT/EDITED badge, centered vertically
+            editBadge.layer.cornerRadius = badgeHeight / 2.0;
+            CGFloat x = maxX - editW;
+            if (x < minX) x = minX;
+            editBadge.frame = CGRectMake(x, y, editW, badgeHeight);
+            [v bringSubviewToFront:editBadge];
+        }
     }
 }
 

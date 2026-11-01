@@ -1289,52 +1289,51 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 }
 
 + (void)startDownloadingAndSaveStoryVideoForTarget:(id)target controller:(UIViewController *)controller {
-    static BOOL isStoryDownloadingVideo = NO;
-    if (isStoryDownloadingVideo) {
-        customLog2(@"[MediaSaver] startDownloadingAndSaveStoryVideo: already downloading, ignoring request");
+    static int activeStoryDownloadSession = 0;
+    static __weak id activeDownloadTarget = nil;
+    static CFAbsoluteTime activeDownloadStartTime = 0;
+    
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (activeDownloadTarget == target && (now - activeDownloadStartTime < 5.0)) {
+        customLog2(@"[MediaSaver] startDownloadingAndSaveStoryVideo: already downloading this target, ignoring repeat tap");
         [self showToast:@"Download in progress, please wait..." success:NO];
         return;
     }
     
-    customLog2(@"[MediaSaver] startDownloadingAndSaveStoryVideo: target=%@, controller=%@", NSStringFromClass([target class]), NSStringFromClass([controller class]));
+    // Increment session to cancel any previously running poll
+    activeStoryDownloadSession++;
+    int currentSession = activeStoryDownloadSession;
+    activeDownloadTarget = target;
+    activeDownloadStartTime = now;
+    
+    customLog2(@"[MediaSaver] startDownloadingAndSaveStoryVideo: session=%d, target=%@, controller=%@", currentSession, NSStringFromClass([target class]), NSStringFromClass([controller class]));
 
     // 1. If already complete and playable on disk, save directly
     NSString *immediatePath = [self findVideoPathForTarget:target controller:controller];
     customLog2(@"[MediaSaver] immediatePath check: %@", immediatePath);
     if (immediatePath && [self isPathVideoPlayable:immediatePath]) {
         customLog2(@"[MediaSaver] immediate complete playable video found on disk! Saving directly: %@", immediatePath);
+        activeDownloadTarget = nil;
         [self saveVideoToPhotos:immediatePath];
         return;
     }
     
-    // 2. Trigger high priority fetch on UniversalVideoNode if possible
-    typedef void (*FetchControlFunc)(void *self, int control);
-    static FetchControlFunc fetchControlFn = NULL;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        fetchControlFn = (FetchControlFunc)dlsym(RTLD_DEFAULT, "$s14AccountContext18UniversalVideoNodeC12fetchControlyyAA0cde5FetchG0OF");
-        customLog2(@"[MediaSaver] dlsym fetchControlFn resolved to: %p", fetchControlFn);
-    });
+    // 2. Ensure content is attached on UniversalVideoNode if possible
     UIView *targetView = [target isKindOfClass:[UIView class]] ? (UIView *)target : (controller.isViewLoaded ? controller.view : nil);
     id vn = findUniversalVideoNode(targetView);
     customLog2(@"[MediaSaver] findUniversalVideoNode returned: %@ (targetView: %@)", vn, NSStringFromClass([targetView class]));
-    if (fetchControlFn && vn) {
+    if (vn) {
         @try {
-            customLog2(@"[MediaSaver] Calling fetchControlFn on %@", vn);
-            fetchControlFn((__bridge void *)vn, 0); // 0 = .fetch
-            customLog2(@"[MediaSaver] fetchControlFn executed successfully");
-        } @catch (NSException *ex) {
-            customLog2(@"[MediaSaver] fetchControlFn threw exception: %@", ex);
-        }
+            [vn setValue:@YES forKey:@"canAttachContent"];
+        } @catch (...) {}
     }
     
     // 3. Inform user that video download is in progress
-    isStoryDownloadingVideo = YES;
     [self showToast:@"Downloading video, please wait..." success:YES];
     
-    // 4. Background polling worker (up to 35 seconds)
+    // 4. Background polling worker (up to 30 seconds)
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        int maxAttempts = 35;
+        int maxAttempts = 30;
         int64_t lastSize = -1;
         int stableCount = 0;
         NSString *lastPath = nil;
@@ -1342,20 +1341,38 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         for (int i = 1; i <= maxAttempts; i++) {
             [NSThread sleepForTimeInterval:1.0];
             
-            // Re-trigger fetch periodically to ensure high priority download
-            if (i % 4 == 0 && fetchControlFn && vn) {
-                @try { fetchControlFn((__bridge void *)vn, 0); } @catch (...) {}
+            // If user initiated another download session, abort this one immediately
+            if (currentSession != activeStoryDownloadSession) {
+                customLog2(@"[MediaSaver] Story download session %d was superseded, stopping poll.", currentSession);
+                return;
             }
             
             NSString *path = [MediaSaver findVideoPathForTarget:target controller:controller];
             if (path && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
                 if ([MediaSaver isPathVideoPlayable:path]) {
                     customLog2(@"[MediaSaver] Poll #%d: complete playable video found: %@", i, path);
-                    isStoryDownloadingVideo = NO;
+                    if (currentSession == activeStoryDownloadSession) {
+                        activeDownloadTarget = nil;
+                    }
                     dispatch_async(dispatch_get_main_queue(), ^{
                         [MediaSaver saveVideoToPhotos:path];
                     });
                     return;
+                }
+                
+                // If path is a partial file, check if non-partial counterpart exists and is complete
+                if ([path hasSuffix:@"_partial"]) {
+                    NSString *nonPartial = [path substringToIndex:path.length - 8];
+                    if ([[NSFileManager defaultManager] fileExistsAtPath:nonPartial] && [MediaSaver isPathVideoPlayable:nonPartial]) {
+                        customLog2(@"[MediaSaver] Poll #%d: non-partial counterpart found playable: %@", i, nonPartial);
+                        if (currentSession == activeStoryDownloadSession) {
+                            activeDownloadTarget = nil;
+                        }
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            [MediaSaver saveVideoToPhotos:nonPartial];
+                        });
+                        return;
+                    }
                 }
                 
                 NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil];
@@ -1377,7 +1394,9 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
                         NSString *tmpPath = [MediaSaver ensureVideoExtension:path];
                         if (tmpPath && [MediaSaver isPathVideoPlayable:tmpPath]) {
                             customLog2(@"[MediaSaver] Stable video file playable! Saving: %@", tmpPath);
-                            isStoryDownloadingVideo = NO;
+                            if (currentSession == activeStoryDownloadSession) {
+                                activeDownloadTarget = nil;
+                            }
                             dispatch_async(dispatch_get_main_queue(), ^{
                                 [MediaSaver saveVideoToPhotos:tmpPath];
                             });
@@ -1392,11 +1411,15 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
             }
         }
         
+        if (currentSession != activeStoryDownloadSession) {
+            return;
+        }
+        
         NSString *finalPath = [MediaSaver findVideoPathForTarget:target controller:controller];
         customLog2(@"[MediaSaver] Polling finished after %d attempts. finalPath: %@", maxAttempts, finalPath);
         if (finalPath && [MediaSaver isPathVideoPlayable:finalPath]) {
             customLog2(@"[MediaSaver] finalPath playable at timeout, saving: %@", finalPath);
-            isStoryDownloadingVideo = NO;
+            activeDownloadTarget = nil;
             dispatch_async(dispatch_get_main_queue(), ^{
                 [MediaSaver saveVideoToPhotos:finalPath];
             });
@@ -1404,7 +1427,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         }
         
         customLog2(@"[MediaSaver] Video download timed out. Displaying timeout toast.");
-        isStoryDownloadingVideo = NO;
+        activeDownloadTarget = nil;
         dispatch_async(dispatch_get_main_queue(), ^{
             [MediaSaver showToast:@"Video download timed out. Try again" success:NO];
         });
