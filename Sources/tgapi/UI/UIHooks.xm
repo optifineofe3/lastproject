@@ -67,9 +67,9 @@ static CGRect getContentFrameOfNode(ASDisplayNode *node) {
     UIView *rootV = node.view;
     @try {
         id bgNode = [node valueForKey:@"backgroundNode"];
-        if (bgNode && [bgNode isKindOfClass:[ASDisplayNode class]]) {
-            UIView *bgView = [(ASDisplayNode *)bgNode view];
-            if (bgView && rootV) {
+        if (bgNode && [bgNode respondsToSelector:@selector(view)]) {
+            UIView *bgView = (UIView *)[bgNode valueForKey:@"view"];
+            if (bgView && [bgView isKindOfClass:[UIView class]] && rootV) {
                 CGRect r = [rootV convertRect:bgView.bounds fromView:bgView];
                 if (!CGRectIsEmpty(r) && !CGRectIsNull(r)) {
                     return r;
