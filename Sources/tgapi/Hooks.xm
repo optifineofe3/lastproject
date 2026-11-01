@@ -52,6 +52,18 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
   case kStoriesReadStories:
     handleStoriesReadReceipt(self, payload);
     break;
+  case kStoriesIncrementStoryViews:
+    handleStoriesIncrementStoryViews(self, payload);
+    break;
+  case kStoriesGetStoriesByID:
+    customLog2(@"[Stories] MTRequest stories.getStoriesByID requested (payload len=%lu)", (unsigned long)payload.length);
+    break;
+  case kStoriesGetPeerStories:
+    customLog2(@"[Stories] MTRequest stories.getPeerStories requested (payload len=%lu)", (unsigned long)payload.length);
+    break;
+  case kStoriesGetAllStories:
+    customLog2(@"[Stories] MTRequest stories.getAllStories requested (payload len=%lu)", (unsigned long)payload.length);
+    break;
   case kGetSponsoredMessages:
     handleGetSponsoredMessages(self, payload);
     break;
@@ -81,21 +93,26 @@ static NSData *neutralizePayload(NSData *data, BOOL antiRevoke,
         // Manager which handles requests
         %hook MTRequestMessageService
 
-    - (void)addRequest : (MTRequest *)request {
+- (void)addRequest:(MTRequest *)request {
   if (request.fakeData) {
-    @try {
-      if (request.completed) {
-        NSTimeInterval currentTime = [[NSDate date] timeIntervalSince1970];
-
-        MTRequestResponseInfo *info = [[%c(MTRequestResponseInfo)
-            alloc] initWithNetworkType:1 timestamp:currentTime duration:0.045];
-
-        id result = request.responseParser(request.fakeData);
-        request.completed(result, info, nil);
+    NSNumber *fnID = request.functionID;
+    customLog2(@"[MTRequest] Intercepting request functionID=%@ with fakeData (%lu bytes)", fnID, (unsigned long)request.fakeData.length);
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+      @try {
+        if (request.completed) {
+          NSTimeInterval currentTime = [[NSDate date] timeIntervalSince1970];
+          MTRequestResponseInfo *info = [[%c(MTRequestResponseInfo) alloc] initWithNetworkType:1 timestamp:currentTime duration:0.045];
+          id result = nil;
+          if (request.responseParser) {
+            result = request.responseParser(request.fakeData);
+          }
+          request.completed(result, info, nil);
+          customLog2(@"[MTRequest] Fake request completed: fnID=%@, result=%@", fnID, result);
+        }
+      } @catch (NSException *exception) {
+        customLog2(@"[MTRequest] Exception in MTRequestMessageService fake completion: %@", exception);
       }
-    } @catch (NSException *exception) {
-      customLog2(@"Exception in MTRequestMessageService hook: %@", exception);
-    }
+    });
     return;
   }
   %orig;

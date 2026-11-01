@@ -5,6 +5,10 @@
 #define kMessagesSetTypingAction 1486110434
 #define kMessagesReadHistory 238054714
 #define kStoriesReadStories -1521034552
+#define kStoriesIncrementStoryViews -1308456197 // stories.incrementStoryViews#b2028afb
+#define kStoriesGetStoriesByID 1467271796      // stories.getStoriesByID#5774ca74
+#define kStoriesGetPeerStories 743094864       // stories.getPeerStories#2c4ada50
+#define kStoriesGetAllStories -290396635       // stories.getAllStories#eeb0d625
 #define kGetSponsoredMessages -1680673735
 #define kSendScreenshotNotification -1589618665
 // messages.readMessageContents#36a73f77 — sent when TTL/disappearing media is

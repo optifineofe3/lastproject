@@ -148,35 +148,47 @@ void handleSetTyping(MTRequest *request, NSData *payload) {
 }
 
 void handleMessageReadReceipt(MTRequest *request, NSData *payload) {
-	if (![[NSUserDefaults standardUserDefaults] boolForKey:kGhostModeEnabled]) return;
-	if ([[NSUserDefaults standardUserDefaults] boolForKey:kDisableMessageReadReceipt]) {
-		
-		 uint8_t header[] = {0x85, 0x91, 0xD1, 0x84}; // messages.affectedMessages#84d19185
-		 int32_t pts = 0;
-		 int32_t pts_count = 0;
-		 
-		 NSMutableData *data = [NSMutableData data];
-		 [data appendBytes:&header length:sizeof(header)];
-		 [data appendBytes:&pts length:sizeof(pts)];
-		 [data appendBytes:&pts_count length:sizeof(pts_count)];
+	BOOL disableMsg = [[NSUserDefaults standardUserDefaults] boolForKey:kDisableMessageReadReceipt];
+	BOOL ghost = [[NSUserDefaults standardUserDefaults] boolForKey:kGhostModeEnabled];
+	if (!disableMsg && !ghost) return;
+
+	uint8_t header[] = {0x85, 0x91, 0xD1, 0x84}; // messages.affectedMessages#84d19185
+	int32_t pts = 0;
+	int32_t pts_count = 0;
 	
-		request.fakeData = data;
-	}
+	NSMutableData *data = [NSMutableData data];
+	[data appendBytes:&header length:sizeof(header)];
+	[data appendBytes:&pts length:sizeof(pts)];
+	[data appendBytes:&pts_count length:sizeof(pts_count)];
+
+	request.fakeData = data;
 }
 
 void handleStoriesReadReceipt(MTRequest *request, NSData *payload) {
-	if (![[NSUserDefaults standardUserDefaults] boolForKey:kGhostModeEnabled]) return;
-	if ([[NSUserDefaults standardUserDefaults] boolForKey:kDisableStoriesReadReceipt]) {
-		
-		uint8_t vectorID[] = {0x15, 0xC4, 0xB5, 0x1C}; // vector#1cb5c415
-		int32_t count = 0;  
-		
-		NSMutableData *data = [NSMutableData data];
-		[data appendBytes:&vectorID length:sizeof(vectorID)];
-		[data appendBytes:&count length:sizeof(count)];
+	BOOL disableStories = [[NSUserDefaults standardUserDefaults] boolForKey:kDisableStoriesReadReceipt];
+	BOOL ghost = [[NSUserDefaults standardUserDefaults] boolForKey:kGhostModeEnabled];
+	customLog2(@"[Stories] handleStoriesReadReceipt: kDisableStoriesReadReceipt=%d, kGhostModeEnabled=%d", disableStories, ghost);
+	if (!disableStories && !ghost) return;
+
+	uint8_t vectorID[] = {0x15, 0xC4, 0xB5, 0x1C}; // vector#1cb5c415
+	int32_t count = 0;  
 	
-		request.fakeData = data;
-	}
+	NSMutableData *data = [NSMutableData data];
+	[data appendBytes:&vectorID length:sizeof(vectorID)];
+	[data appendBytes:&count length:sizeof(count)];
+
+	request.fakeData = data;
+	customLog2(@"[Stories] Faked stories.readStories response with empty vector (8 bytes)");
+}
+
+void handleStoriesIncrementStoryViews(MTRequest *request, NSData *payload) {
+	BOOL disableStories = [[NSUserDefaults standardUserDefaults] boolForKey:kDisableStoriesReadReceipt];
+	BOOL ghost = [[NSUserDefaults standardUserDefaults] boolForKey:kGhostModeEnabled];
+	customLog2(@"[Stories] handleStoriesIncrementStoryViews: kDisableStoriesReadReceipt=%d, kGhostModeEnabled=%d", disableStories, ghost);
+	if (!disableStories && !ghost) return;
+
+	request.fakeData = boolTrue();
+	customLog2(@"[Stories] Faked stories.incrementStoryViews response with boolTrue");
 }
 
 void handleGetSponsoredMessages(MTRequest *request, NSData *payload) {
@@ -188,10 +200,10 @@ void handleGetSponsoredMessages(MTRequest *request, NSData *payload) {
 }
 
 void handleChannelsReadReceipt(MTRequest *request, NSData *payload) {
-	if (![[NSUserDefaults standardUserDefaults] boolForKey:kGhostModeEnabled]) return;
-	if ([[NSUserDefaults standardUserDefaults] boolForKey:kDisableMessageReadReceipt]) {
-		request.fakeData = boolTrue();
-	}
+	BOOL disableMsg = [[NSUserDefaults standardUserDefaults] boolForKey:kDisableMessageReadReceipt];
+	BOOL ghost = [[NSUserDefaults standardUserDefaults] boolForKey:kGhostModeEnabled];
+	if (!disableMsg && !ghost) return;
+	request.fakeData = boolTrue();
 }
 
 void handleSendScreenshotNotification(MTRequest *request, NSData *payload) {

@@ -894,14 +894,43 @@ static void refreshDeletedBadgesInView(UIView *view) {
 - (void)didMoveToWindow {
     %orig;
     UIView *view = (UIView *)self;
+    customLog2(@"[Stories] StoryItemSetContainerComponent.View didMoveToWindow: window=%@", view.window);
     if (!view.window) return;
     UIResponder *r = view.nextResponder;
     while (r && ![r isKindOfClass:[UIViewController class]]) {
         r = r.nextResponder;
     }
     if ([r isKindOfClass:[UIViewController class]]) {
+        customLog2(@"[Stories] Attaching MediaSaver to %@", NSStringFromClass([r class]));
         [MediaSaver attachToController:(UIViewController *)r];
     }
+}
+
+%end
+
+@interface _TtC20StoryContainerScreen20StoryContainerScreen : UIViewController
+@end
+
+%hook _TtC20StoryContainerScreen20StoryContainerScreen
+
+- (void)viewDidLoad {
+    %orig;
+    customLog2(@"[Stories] StoryContainerScreen viewDidLoad");
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    customLog2(@"[Stories] StoryContainerScreen viewWillAppear: animated=%d", animated);
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    customLog2(@"[Stories] StoryContainerScreen viewDidAppear: animated=%d", animated);
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    %orig;
+    customLog2(@"[Stories] StoryContainerScreen viewWillDisappear: animated=%d", animated);
 }
 
 %end
