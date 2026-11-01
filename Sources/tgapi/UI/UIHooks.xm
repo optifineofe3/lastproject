@@ -449,15 +449,26 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     CGRect bFrame = getContentFrameOfNode(node);
     CGFloat badgeHeight = 13.5;
 
+    CGFloat rowWidth = node.bounds.size.width;
+    if (rowWidth < 50.0 && v) {
+        rowWidth = v.bounds.size.width;
+    }
+    if (rowWidth < 50.0) {
+        rowWidth = [UIScreen mainScreen].bounds.size.width;
+    }
+
+    CGFloat maxX = rowWidth - 5.0;
+    CGFloat minX = 5.0;
+
+    CGFloat spaceOnRight = rowWidth - CGRectGetMaxX(bFrame);
+    BOOL hasPlentyOfSpaceOnRight = (spaceOnRight >= 85.0);
+
     BOOL hasMedia = doesNodeHaveMedia(node);
-    BOOL isMultiLine = hasMedia || (bFrame.size.height > 52.0);
+    BOOL isMultiLine = hasMedia || (bFrame.size.height > 55.0);
 
-    CGFloat maxX = CGRectGetMaxX(bFrame) - 5.0;
-    CGFloat minX = CGRectGetMinX(bFrame) + 5.0;
-
-    // Check single-line crowding: if bubble text is long (~26+ chars) or width is large (>= 210 pt)
+    // Check single-line crowding: only if crowded on the right (not plenty of space) and text is long (>= 34 chars)
     BOOL isSingleLineCrowded = NO;
-    if (!isMultiLine && isDel && isEdit) {
+    if (!isMultiLine && isDel && isEdit && !hasPlentyOfSpaceOnRight) {
         NSString *nodeText = nil;
         if (msgId) {
             nodeText = (NSString *)[NSClassFromString(@"TLParser") getOriginalTextForId:msgId];
@@ -465,16 +476,17 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         if (!nodeText) {
             nodeText = getNodeText(node);
         }
-        if ((nodeText && nodeText.length >= 26) || bFrame.size.width >= 210.0 || (maxX - minX < 120.0)) {
+        if (nodeText && nodeText.length >= 34) {
             isSingleLineCrowded = YES;
         }
     }
 
-    // Stacked mode applies when both badges exist on multi-line/media OR crowded single-line
-    BOOL shouldStack = (isDel && isEdit) && (isMultiLine || isSingleLineCrowded);
+    // Stacked mode applies when both badges exist AND space is tight:
+    // (multi-line without plenty of space on right, OR crowded single-line)
+    BOOL shouldStack = (isDel && isEdit) && (!hasPlentyOfSpaceOnRight && (isMultiLine || isSingleLineCrowded));
 
-    // Edit badge text: EDT when stacked, multi-line, or compact bubble; EDITED on uncrowded single-line
-    NSString *editText = (shouldStack || isMultiLine || bFrame.size.width < 140.0) ? @"EDT" : @"EDITED";
+    // Edit badge text: EDT when stacked or multi-line without space; EDITED on uncrowded or when plenty of space
+    NSString *editText = (shouldStack || (!hasPlentyOfSpaceOnRight && isMultiLine)) ? @"EDT" : @"EDITED";
     if (editBadge) {
         editBadge.text = editText;
     }
