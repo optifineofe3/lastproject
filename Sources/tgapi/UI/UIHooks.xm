@@ -6,14 +6,18 @@
 
 // Menu Open
 @interface ASDisplayNode : NSObject
-@property (atomic, assign, readonly) UIView *view;
+@property (atomic, assign, readwrite) CGRect frame;
 @property (atomic, assign, readonly) CGRect bounds;
+@property (atomic, assign, readonly) UIView *view;
 @property (atomic, assign, readonly) BOOL isNodeLoaded;
 @property (atomic, copy, readonly) NSArray *subnodes;
+@property (atomic, assign, readonly) ASDisplayNode *supernode;
 @property (atomic, copy, readwrite) NSString *accessibilityLabel;
 @property (nonatomic, strong) UILongPressGestureRecognizer *longPressGesture;
 @property (nonatomic, strong) UITapGestureRecognizer *tapGesture;
 - (void)didLoad;
+- (void)layout;
+- (void)layoutDidFinish;
 - (void)__handleSettingsTabLongPress:(UILongPressGestureRecognizer *)gesture;
 - (void)__handle5PleTap;
 @end
@@ -967,6 +971,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
 %group DisplayViewGroup
 
 @interface _ASDisplayView : UIView
+@property (nonatomic, weak) ASDisplayNode *asyncdisplaykit_node;
 @end
 
 %hook _ASDisplayView
@@ -975,7 +980,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
     %orig;
     ASDisplayNode *node = nil;
     if ([self respondsToSelector:@selector(asyncdisplaykit_node)]) {
-        node = [self performSelector:@selector(asyncdisplaykit_node)];
+        node = self.asyncdisplaykit_node;
     }
     if (node && isMainMessageNode(node)) {
         updateDeletedBadgeForNode(node);
