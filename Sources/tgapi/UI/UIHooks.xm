@@ -62,22 +62,183 @@ void handleThreeFingerLongPress(UILongPressGestureRecognizer *gesture) {
 }
 @end
 
-static CGRect getContentFrameOfNode(ASDisplayNode *node) {
-    if (!node) return CGRectZero;
-    UIView *rootV = node.view;
+static ASDisplayNode *findPrimaryContentNode(ASDisplayNode *node) {
+    if (!node) return nil;
+    
     @try {
-        id bgNode = [node valueForKey:@"backgroundNode"];
-        if (bgNode && [bgNode respondsToSelector:@selector(view)]) {
-            UIView *bgView = (UIView *)[bgNode valueForKey:@"view"];
-            if (bgView && [bgView isKindOfClass:[UIView class]] && rootV) {
-                CGRect r = [rootV convertRect:bgView.bounds fromView:bgView];
-                if (!CGRectIsEmpty(r) && !CGRectIsNull(r)) {
+        id bg = [node valueForKey:@"backgroundNode"];
+        if (bg && [bg isKindOfClass:NSClassFromString(@"ASDisplayNode")]) {
+            return (ASDisplayNode *)bg;
+        }
+    } @catch (NSException *e) {}
+    
+    NSMutableArray<ASDisplayNode *> *queue = [NSMutableArray arrayWithObject:node];
+    ASDisplayNode *mediaNode = nil;
+    while (queue.count > 0) {
+        ASDisplayNode *cur = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        
+        NSString *cls = NSStringFromClass([cur class]);
+        if ([cls containsString:@"ChatMessageBackground"]) {
+            return cur;
+        }
+        if (!mediaNode && ([cls containsString:@"TransformImageNode"] ||
+                           [cls containsString:@"InstantVideo"] ||
+                           [cls containsString:@"VideoNode"] ||
+                           [cls containsString:@"OverlayInstantVideoNode"])) {
+            mediaNode = cur;
+        }
+        
+        for (ASDisplayNode *sub in cur.subnodes) {
+            [queue addObject:sub];
+        }
+    }
+    return mediaNode;
+}
+
+static CGRect getFrameOfSubnodeInAncestor(ASDisplayNode *child, ASDisplayNode *ancestor) {
+    if (!child || !ancestor) return CGRectZero;
+    
+    // 1. If views are loaded and attached, try UIKit coordinate conversion
+    if (child.isNodeLoaded && ancestor.isNodeLoaded) {
+        UIView *cv = child.view;
+        UIView *av = ancestor.view;
+        if (cv && av) {
+            if (cv.window && av.window && cv.window == av.window) {
+                CGRect r = [av convertRect:cv.bounds fromView:cv];
+                if (r.size.width > 5.0 && r.size.height > 5.0) {
                     return r;
+                }
+            }
+            CGRect r = cv.bounds;
+            UIView *cur = cv;
+            BOOL reached = NO;
+            while (cur && cur != av) {
+                r.origin.x += cur.frame.origin.x;
+                r.origin.y += cur.frame.origin.y;
+                cur = cur.superview;
+                if (cur == av) {
+                    reached = YES;
+                    break;
+                }
+            }
+            if (reached && r.size.width > 5.0 && r.size.height > 5.0) {
+                return r;
+            }
+        }
+    }
+    
+    // 2. Walk ASDisplayNode supernode hierarchy
+    CGRect r = child.frame;
+    ASDisplayNode *cur = child.supernode;
+    BOOL reached = NO;
+    while (cur) {
+        if (cur == ancestor) {
+            reached = YES;
+            break;
+        }
+        CGRect curFrame = cur.frame;
+        r.origin.x += curFrame.origin.x;
+        r.origin.y += curFrame.origin.y;
+        cur = cur.supernode;
+    }
+    if (reached && r.size.width > 5.0 && r.size.height > 5.0) {
+        return r;
+    }
+    
+    if (child.frame.size.width > 5.0 && child.frame.size.height > 5.0) {
+        return child.frame;
+    }
+    
+    return CGRectZero;
+}
+
+static CGFloat getAttachedDateHeaderInset(ASDisplayNode *node) {
+    if (!node) return 0.0;
+    
+    // 1. Check item.headers on ChatMessageItem
+    @try {
+        id item = [node valueForKey:@"item"];
+        if (item) {
+            id headers = [item valueForKey:@"headers"];
+            if ([headers isKindOfClass:[NSArray class]] && [(NSArray *)headers count] > 0) {
+                for (id h in (NSArray *)headers) {
+                    NSString *hCls = NSStringFromClass([h class]);
+                    if ([hCls containsString:@"Date"]) {
+                        return 34.0;
+                    }
                 }
             }
         }
     } @catch (NSException *e) {}
+    
+    // 2. Check attachedHeaderNodes on ListViewItemNode
+    @try {
+        id headers = [node valueForKey:@"attachedHeaderNodes"];
+        if ([headers isKindOfClass:[NSArray class]] && [(NSArray *)headers count] > 0) {
+            for (id h in (NSArray *)headers) {
+                NSString *hCls = NSStringFromClass([h class]);
+                if ([hCls containsString:@"Date"]) {
+                    return 34.0;
+                }
+            }
+        }
+    } @catch (NSException *e) {}
+    
+    // 3. Check attachedDateHeaderInset selector
+    @try {
+        SEL sel = NSSelectorFromString(@"attachedDateHeaderInset");
+        if ([node respondsToSelector:sel]) {
+            NSMethodSignature *sig = [node methodSignatureForSelector:sel];
+            if (sig && strcmp([sig methodReturnType], @encode(CGFloat)) == 0) {
+                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+                [inv setTarget:node];
+                [inv setSelector:sel];
+                [inv invoke];
+                CGFloat inset = 0.0;
+                [inv getReturnValue:&inset];
+                if (inset > 0.0) return inset;
+            }
+        }
+    } @catch (NSException *e) {}
+    
+    // 4. Check sibling date header in list view
+    @try {
+        UIView *v = node.isNodeLoaded ? node.view : nil;
+        if (v && v.superview) {
+            for (UIView *sibling in v.superview.subviews) {
+                NSString *sCls = NSStringFromClass([sibling class]);
+                if ([sCls containsString:@"ChatMessageDateHeader"] || [sCls containsString:@"DateHeader"]) {
+                    if (fabs(CGRectGetMaxY(sibling.frame) - CGRectGetMinY(v.frame)) < 45.0 ||
+                        fabs(CGRectGetMinY(sibling.frame) - CGRectGetMinY(v.frame)) < 45.0) {
+                        return 34.0;
+                    }
+                }
+            }
+        }
+    } @catch (NSException *e) {}
+    
+    return 0.0;
+}
 
+static CGRect getContentFrameOfNode(ASDisplayNode *node) {
+    if (!node) return CGRectZero;
+    
+    CGFloat topInset = getAttachedDateHeaderInset(node);
+    
+    // 1. Try finding primary content node (ChatMessageBackground, image/video node)
+    ASDisplayNode *target = findPrimaryContentNode(node);
+    if (target) {
+        CGRect r = getFrameOfSubnodeInAncestor(target, node);
+        if (r.size.width > 10.0 && r.size.height > 10.0) {
+            if (topInset > 0.0 && r.origin.y < topInset * 0.7) {
+                r.origin.y += topInset;
+            }
+            return r;
+        }
+    }
+    
+    // 2. Try contentFrame selector
     if ([node respondsToSelector:@selector(contentFrame)]) {
         SEL sel = @selector(contentFrame);
         NSMethodSignature *sig = [node methodSignatureForSelector:sel];
@@ -88,12 +249,22 @@ static CGRect getContentFrameOfNode(ASDisplayNode *node) {
             [inv invoke];
             CGRect rect;
             [inv getReturnValue:&rect];
-            if (!CGRectIsEmpty(rect) && !CGRectIsNull(rect)) {
+            if (rect.size.width > 10.0 && rect.size.height > 10.0) {
+                if (topInset > 0.0 && rect.origin.y < topInset * 0.7) {
+                    rect.origin.y += topInset;
+                }
                 return rect;
             }
         }
     }
-    return node.bounds;
+    
+    // 3. Fallback to node.bounds adjusted for any attached date header
+    CGRect b = node.bounds;
+    if (topInset > 0.0 && b.size.height > topInset + 20.0) {
+        b.origin.y += topInset;
+        b.size.height -= topInset;
+    }
+    return b;
 }
 
 static BOOL isMainMessageNode(ASDisplayNode *node) {
@@ -410,6 +581,13 @@ static void refreshDeletedBadgesInView(UIView *view) {
     if ([className containsString:@"InstantVideo"] || [className containsString:@"OverlayInstantVideoNode"]) {
         [MediaSaver attachInstantVideoButtonToNode:self];
     } else if (isMainMessageNode(self)) {
+        updateDeletedBadgeForNode(self);
+    }
+}
+
+- (void)layoutDidFinish {
+    %orig;
+    if (isMainMessageNode(self)) {
         updateDeletedBadgeForNode(self);
     }
 }
@@ -792,6 +970,17 @@ static void refreshDeletedBadgesInView(UIView *view) {
 @end
 
 %hook _ASDisplayView
+
+- (void)layoutSubviews {
+    %orig;
+    ASDisplayNode *node = nil;
+    if ([self respondsToSelector:@selector(asyncdisplaykit_node)]) {
+        node = [self performSelector:@selector(asyncdisplaykit_node)];
+    }
+    if (node && isMainMessageNode(node)) {
+        updateDeletedBadgeForNode(node);
+    }
+}
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *btn = [self viewWithTag:998833];
