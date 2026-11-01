@@ -971,7 +971,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
 %group DisplayViewGroup
 
 @interface _ASDisplayView : UIView
-@property (nonatomic, weak) ASDisplayNode *asyncdisplaykit_node;
+- (ASDisplayNode *)asyncdisplaykit_node;
 @end
 
 %hook _ASDisplayView
@@ -979,9 +979,11 @@ static void refreshDeletedBadgesInView(UIView *view) {
 - (void)layoutSubviews {
     %orig;
     ASDisplayNode *node = nil;
-    if ([self respondsToSelector:@selector(asyncdisplaykit_node)]) {
-        node = self.asyncdisplaykit_node;
-    }
+    @try {
+        if ([self respondsToSelector:@selector(asyncdisplaykit_node)]) {
+            node = [(_ASDisplayView *)self asyncdisplaykit_node];
+        }
+    } @catch (NSException *e) {}
     if (node && isMainMessageNode(node)) {
         updateDeletedBadgeForNode(node);
     }
