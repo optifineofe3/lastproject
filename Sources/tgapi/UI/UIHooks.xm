@@ -1082,16 +1082,18 @@ static void animateOutStoryDownloadButton(UIView *btn, NSTimeInterval duration) 
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     customLog2(@"[Stories] StoryContainerScreen viewWillDisappear: animated=%d", animated);
-    UIView *btn = [self.view viewWithTag:998811] ?: [self.view.window viewWithTag:998811];
+    UIViewController *vc = (UIViewController *)self;
+    UIView *btn = [vc.view viewWithTag:998811] ?: [vc.view.window viewWithTag:998811];
     if (btn && btn.alpha > 0.05) {
         animateOutStoryDownloadButton(btn, 0.18);
     }
-    [MediaSaver detachFromController:self animated:YES];
+    [MediaSaver detachFromController:vc animated:YES];
 }
 
 - (void)dismissViewControllerAnimated:(BOOL)flag completion:(id)completion {
     customLog2(@"[Stories] StoryContainerScreen dismissViewControllerAnimated: animated=%d", flag);
-    UIView *btn = [self.view viewWithTag:998811] ?: [self.view.window viewWithTag:998811];
+    UIViewController *vc = (UIViewController *)self;
+    UIView *btn = [vc.view viewWithTag:998811] ?: [vc.view.window viewWithTag:998811];
     if (btn && btn.alpha > 0.05) {
         animateOutStoryDownloadButton(btn, 0.18);
     }
