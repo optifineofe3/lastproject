@@ -873,7 +873,10 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         return;
     }
     
-    if (animated) {
+    NSString *ctrlName = NSStringFromClass([controller class]);
+    BOOL isStory = [ctrlName containsString:@"StoryContainerScreen"] || [ctrlName containsString:@"StoryContainer"];
+    
+    if (animated || isStory) {
         [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
             btn.alpha = 0.0;
             btn.transform = CGAffineTransformMakeScale(0.85, 0.85);

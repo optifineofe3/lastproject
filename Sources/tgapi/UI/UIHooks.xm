@@ -854,9 +854,6 @@ static void refreshDeletedBadgesInView(UIView *view) {
 @interface _TtC7Display19SparseContainerView : UIView
 @end
 
-@interface _TtCC20StoryContainerScreen32StoryItemSetContainerComponent4View : UIView
-@end
-
 %hook _TtC12TelegramCore16TelegramMediaFile
 
 - (BOOL)isVoice {
@@ -956,54 +953,86 @@ static void refreshDeletedBadgesInView(UIView *view) {
 
 %end
 
-%hook _TtCC20StoryContainerScreen32StoryItemSetContainerComponent4View
+static UIView *findStoryDownloadButton(UIView *fromView) {
+    if (!fromView) return nil;
+    UIView *btn = [fromView viewWithTag:998811];
+    if (btn) return btn;
+    if (fromView.window) {
+        btn = [fromView.window viewWithTag:998811];
+        if (btn) return btn;
+    }
+    UIResponder *r = fromView.nextResponder;
+    while (r) {
+        if ([r isKindOfClass:[UIViewController class]]) {
+            UIViewController *vc = (UIViewController *)r;
+            if (vc.isViewLoaded) {
+                btn = [vc.view viewWithTag:998811];
+                if (btn) return btn;
+            }
+        }
+        r = r.nextResponder;
+    }
+    return nil;
+}
+
+static void animateOutStoryDownloadButton(UIView *btn, NSTimeInterval duration) {
+    if (!btn || btn.alpha <= 0.01) return;
+    [UIView animateWithDuration:(duration > 0 ? duration : 0.18)
+                          delay:0.0
+                        options:UIViewAnimationOptionCurveEaseIn | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{
+        btn.alpha = 0.0;
+        btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
+    } completion:^(BOOL finished) {
+        if (btn.alpha <= 0.05) {
+            [btn removeFromSuperview];
+        }
+    }];
+}
+
+%group StoryItemGroup
+
+@interface StoryItemSetContainerComponentView : UIView
+@end
+
+%hook StoryItemSetContainerComponentView
 
 - (void)didMoveToWindow {
     %orig;
     UIView *view = (UIView *)self;
-    customLog2(@"[Stories] StoryItemSetContainerComponent.View didMoveToWindow: window=%@", view.window);
     if (!view.window) return;
     UIResponder *r = view.nextResponder;
     while (r && ![r isKindOfClass:[UIViewController class]]) {
         r = r.nextResponder;
     }
     if ([r isKindOfClass:[UIViewController class]]) {
-        customLog2(@"[Stories] Attaching MediaSaver to %@", NSStringFromClass([r class]));
         [MediaSaver attachToController:(UIViewController *)r];
     }
+}
+
+- (void)closePressed {
+    UIView *btn = findStoryDownloadButton((UIView *)self);
+    if (btn && btn.alpha > 0.05) {
+        animateOutStoryDownloadButton(btn, 0.18);
+    }
+    %orig;
 }
 
 - (void)viewListDismissPanGesture:(UIPanGestureRecognizer *)recognizer {
     %orig;
     
-    UIView *btn = [(UIView *)self viewWithTag:998811];
-    if (!btn && [(UIView *)self window]) {
-        btn = [[(UIView *)self window] viewWithTag:998811];
-    }
-    if (!btn) {
-        UIResponder *r = [(UIView *)self nextResponder];
-        while (r && ![r isKindOfClass:[UIViewController class]]) {
-            r = r.nextResponder;
-        }
-        if ([r isKindOfClass:[UIViewController class]]) {
-            btn = [((UIViewController *)r).view viewWithTag:998811];
-        }
-    }
+    UIView *btn = findStoryDownloadButton((UIView *)self);
     if (!btn) return;
     
     if (recognizer.state == UIGestureRecognizerStateBegan || recognizer.state == UIGestureRecognizerStateChanged) {
         CGPoint translation = [recognizer translationInView:(UIView *)self];
         if (translation.y > 0) {
-            CGFloat threshold = 160.0;
+            CGFloat threshold = 150.0;
             CGFloat progress = fmax(0.0, fmin(1.0, translation.y / threshold));
             CGFloat value = 1.0 - progress;
             btn.alpha = value;
-            if (value < 0.99) {
-                CGFloat scale = 0.85 + 0.15 * value;
-                btn.transform = CGAffineTransformMakeScale(scale, scale);
-            } else {
-                btn.transform = CGAffineTransformIdentity;
-            }
+            CGFloat scale = 0.85 + 0.15 * value;
+            btn.transform = CGAffineTransformMakeScale(scale, scale);
         } else {
             btn.alpha = 1.0;
             btn.transform = CGAffineTransformIdentity;
@@ -1012,16 +1041,11 @@ static void refreshDeletedBadgesInView(UIView *view) {
         CGPoint translation = [recognizer translationInView:(UIView *)self];
         CGPoint velocity = [recognizer velocityInView:(UIView *)self];
         
-        BOOL shouldDismiss = (translation.y > 200.0) || (translation.y > 5.0 && velocity.y > 200.0);
+        BOOL shouldDismiss = (translation.y > 180.0) || (translation.y > 5.0 && velocity.y > 200.0);
         if (shouldDismiss) {
-            [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-                btn.alpha = 0.0;
-                btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
-            } completion:^(BOOL finished) {
-                [btn removeFromSuperview];
-            }];
+            animateOutStoryDownloadButton(btn, 0.18);
         } else {
-            [UIView animateWithDuration:0.25 delay:0.0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            [UIView animateWithDuration:0.22 delay:0.0 options:UIViewAnimationOptionCurveEaseOut animations:^{
                 btn.alpha = 1.0;
                 btn.transform = CGAffineTransformIdentity;
             } completion:nil];
@@ -1029,30 +1053,16 @@ static void refreshDeletedBadgesInView(UIView *view) {
     }
 }
 
-- (void)willMoveToWindow:(UIWindow *)newWindow {
-    %orig;
-    if (!newWindow) {
-        UIView *btn = [(UIView *)self viewWithTag:998811];
-        if (!btn && [(UIView *)self window]) {
-            btn = [[(UIView *)self window] viewWithTag:998811];
-        }
-        if (btn && btn.alpha > 0.05) {
-            [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
-                btn.alpha = 0.0;
-                btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
-            } completion:^(BOOL finished) {
-                [btn removeFromSuperview];
-            }];
-        }
-    }
-}
+%end
 
 %end
 
-@interface _TtC20StoryContainerScreen20StoryContainerScreen : UIViewController
+%group StoryContainerGroup
+
+@interface StoryContainerScreen : UIViewController
 @end
 
-%hook _TtC20StoryContainerScreen20StoryContainerScreen
+%hook StoryContainerScreen
 
 - (void)viewDidLoad {
     %orig;
@@ -1072,8 +1082,23 @@ static void refreshDeletedBadgesInView(UIView *view) {
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     customLog2(@"[Stories] StoryContainerScreen viewWillDisappear: animated=%d", animated);
-    [MediaSaver detachFromController:self animated:animated];
+    UIView *btn = [self.view viewWithTag:998811] ?: [self.view.window viewWithTag:998811];
+    if (btn && btn.alpha > 0.05) {
+        animateOutStoryDownloadButton(btn, 0.18);
+    }
+    [MediaSaver detachFromController:self animated:YES];
 }
+
+- (void)dismissViewControllerAnimated:(BOOL)flag completion:(id)completion {
+    customLog2(@"[Stories] StoryContainerScreen dismissViewControllerAnimated: animated=%d", flag);
+    UIView *btn = [self.view viewWithTag:998811] ?: [self.view.window viewWithTag:998811];
+    if (btn && btn.alpha > 0.05) {
+        animateOutStoryDownloadButton(btn, 0.18);
+    }
+    %orig;
+}
+
+%end
 
 %end
 
@@ -1313,8 +1338,40 @@ static Class findClassSubstr(const char *suffix) {
 
 %end
 
+static void initStoryHooks(void) {
+    static BOOL initialized = NO;
+    if (initialized) return;
+
+    Class storyItemViewClass = objc_getClass("_TtCC20StoryContainerScreen30StoryItemSetContainerComponent4View");
+    if (!storyItemViewClass) {
+        storyItemViewClass = objc_getClass("StoryContainerScreen.StoryItemSetContainerComponent.View");
+    }
+    if (!storyItemViewClass) {
+        storyItemViewClass = findClassSubstr("StoryItemSetContainerComponent4View");
+    }
+    if (storyItemViewClass) {
+        %init(StoryItemGroup, StoryItemSetContainerComponentView = storyItemViewClass);
+    }
+
+    Class storyContainerClass = objc_getClass("_TtC20StoryContainerScreen20StoryContainerScreen");
+    if (!storyContainerClass) {
+        storyContainerClass = objc_getClass("StoryContainerScreen.StoryContainerScreen");
+    }
+    if (!storyContainerClass) {
+        storyContainerClass = findClassSubstr("StoryContainerScreen");
+    }
+    if (storyContainerClass) {
+        %init(StoryContainerGroup, StoryContainerScreen = storyContainerClass);
+    }
+
+    if (storyItemViewClass && storyContainerClass) {
+        initialized = YES;
+    }
+}
+
 __attribute__((constructor))
 static void hook() {
+    initStoryHooks();
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
         kDisableForwardRestriction: @YES,
         kAntiSelfDestruct: @YES,
@@ -1417,6 +1474,8 @@ static void hook() {
         if (tapGestureClass) {
             %init(TapGestureGroup, TapLongTapOrDoubleTapGestureRecognizer = tapGestureClass);
         }
+
+        initStoryHooks();
 
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [LeadDownloadBoost install];
