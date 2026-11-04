@@ -341,6 +341,39 @@ static NSString *getNodeText(ASDisplayNode *node) {
     return nil;
 }
 
+static BOOL isNodeOutgoing(ASDisplayNode *node, CGRect bFrame, CGFloat rowWidth) {
+    if (!node) return NO;
+    
+    @try {
+        id bgType = [node valueForKey:@"backgroundType"];
+        if (bgType) {
+            NSString *desc = [[bgType description] lowercaseString];
+            if ([desc containsString:@"outgoing"]) return YES;
+            if ([desc containsString:@"incoming"]) return NO;
+        }
+    } @catch (NSException *e) {}
+    
+    @try {
+        id item = [node valueForKey:@"item"];
+        if (item) {
+            id bgType = [item valueForKey:@"backgroundType"];
+            if (bgType) {
+                NSString *desc = [[bgType description] lowercaseString];
+                if ([desc containsString:@"outgoing"]) return YES;
+                if ([desc containsString:@"incoming"]) return NO;
+            }
+        }
+    } @catch (NSException *e) {}
+    
+    // Geometrical layout check:
+    // Outgoing messages are pinned to the right edge (space on left is much larger than space on right).
+    // Incoming messages are pinned to the left edge (space on right is much larger than space on left).
+    CGFloat spaceOnLeft = bFrame.origin.x;
+    CGFloat spaceOnRight = rowWidth - CGRectGetMaxX(bFrame);
+    
+    return (spaceOnLeft > spaceOnRight);
+}
+
 static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     if (!node || !node.isNodeLoaded) return;
     if (!isMainMessageNode(node)) return;
@@ -460,15 +493,17 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     CGFloat maxX = rowWidth - 5.0;
     CGFloat minX = 5.0;
 
-    CGFloat spaceOnRight = rowWidth - CGRectGetMaxX(bFrame);
-    BOOL hasPlentyOfSpaceOnRight = (spaceOnRight >= 85.0);
+    BOOL isOutgoing = isNodeOutgoing(node, bFrame, rowWidth);
+
+    CGFloat availableSpace = isOutgoing ? bFrame.origin.x : (rowWidth - CGRectGetMaxX(bFrame));
+    BOOL hasPlentyOfSpace = (availableSpace >= 85.0);
 
     BOOL hasMedia = doesNodeHaveMedia(node);
     BOOL isMultiLine = hasMedia || (bFrame.size.height > 55.0);
 
-    // Check single-line crowding: only if crowded on the right (not plenty of space) and text is long (>= 34 chars)
+    // Check single-line crowding: only if crowded (not plenty of space) and text is long (>= 34 chars)
     BOOL isSingleLineCrowded = NO;
-    if (!isMultiLine && isDel && isEdit && !hasPlentyOfSpaceOnRight) {
+    if (!isMultiLine && isDel && isEdit && !hasPlentyOfSpace) {
         NSString *nodeText = nil;
         if (msgId) {
             nodeText = (NSString *)[NSClassFromString(@"TLParser") getOriginalTextForId:msgId];
@@ -482,11 +517,11 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     }
 
     // Stacked mode applies when both badges exist AND space is tight:
-    // (multi-line without plenty of space on right, OR crowded single-line)
-    BOOL shouldStack = (isDel && isEdit) && (!hasPlentyOfSpaceOnRight && (isMultiLine || isSingleLineCrowded));
+    // (multi-line without plenty of space, OR crowded single-line)
+    BOOL shouldStack = (isDel && isEdit) && (!hasPlentyOfSpace && (isMultiLine || isSingleLineCrowded));
 
     // Edit badge text: EDT when stacked or multi-line without space; EDITED on uncrowded or when plenty of space
-    NSString *editText = (shouldStack || (!hasPlentyOfSpaceOnRight && isMultiLine)) ? @"EDT" : @"EDITED";
+    NSString *editText = (shouldStack || (!hasPlentyOfSpace && isMultiLine)) ? @"EDT" : @"EDITED";
     if (editBadge) {
         editBadge.text = editText;
     }
@@ -509,13 +544,22 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         delBadge.layer.cornerRadius = badgeHeight / 2.0;
         editBadge.layer.cornerRadius = badgeHeight / 2.0;
 
-        CGFloat delX = maxX - delW;
-        if (delX < minX) delX = minX;
-        delBadge.frame = CGRectMake(delX, startY, delW, badgeHeight);
+        if (isOutgoing) {
+            // OUTGOING: stacked vertically on the LEFT of the row
+            CGFloat delX = minX;
+            CGFloat editX = minX;
+            delBadge.frame = CGRectMake(delX, startY, delW, badgeHeight);
+            editBadge.frame = CGRectMake(editX, startY + badgeHeight + stackGap, editW, badgeHeight);
+        } else {
+            // INCOMING: stacked vertically on the RIGHT of the row
+            CGFloat delX = maxX - delW;
+            if (delX < minX) delX = minX;
+            delBadge.frame = CGRectMake(delX, startY, delW, badgeHeight);
 
-        CGFloat editX = maxX - editW;
-        if (editX < minX) editX = minX;
-        editBadge.frame = CGRectMake(editX, startY + badgeHeight + stackGap, editW, badgeHeight);
+            CGFloat editX = maxX - editW;
+            if (editX < minX) editX = minX;
+            editBadge.frame = CGRectMake(editX, startY + badgeHeight + stackGap, editW, badgeHeight);
+        }
 
         [v bringSubviewToFront:delBadge];
         [v bringSubviewToFront:editBadge];
@@ -523,33 +567,56 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         CGFloat y = centerY - badgeHeight / 2.0;
 
         if (isDel && isEdit) {
-            // Side-by-side on short single-line message
+            // Side-by-side on short single-line message or plenty of space
             delBadge.layer.cornerRadius = badgeHeight / 2.0;
             editBadge.layer.cornerRadius = badgeHeight / 2.0;
 
-            CGFloat editX = maxX - editW;
-            if (editX < minX) editX = minX;
-            editBadge.frame = CGRectMake(editX, y, editW, badgeHeight);
+            if (isOutgoing) {
+                // OUTGOING: side-by-side on the LEFT (DEL then EDIT)
+                CGFloat delX = minX;
+                CGFloat editX = delX + delW + 3.0;
+                delBadge.frame = CGRectMake(delX, y, delW, badgeHeight);
+                editBadge.frame = CGRectMake(editX, y, editW, badgeHeight);
+            } else {
+                // INCOMING: side-by-side on the RIGHT
+                CGFloat editX = maxX - editW;
+                if (editX < minX) editX = minX;
+                editBadge.frame = CGRectMake(editX, y, editW, badgeHeight);
 
-            CGFloat delX = editX - delW - 3.0;
-            if (delX < minX) delX = minX;
-            delBadge.frame = CGRectMake(delX, y, delW, badgeHeight);
+                CGFloat delX = editX - delW - 3.0;
+                if (delX < minX) delX = minX;
+                delBadge.frame = CGRectMake(delX, y, delW, badgeHeight);
+            }
 
             [v bringSubviewToFront:delBadge];
             [v bringSubviewToFront:editBadge];
         } else if (isDel) {
             // Single DEL badge, centered vertically
             delBadge.layer.cornerRadius = badgeHeight / 2.0;
-            CGFloat x = maxX - delW;
-            if (x < minX) x = minX;
-            delBadge.frame = CGRectMake(x, y, delW, badgeHeight);
+            if (isOutgoing) {
+                // OUTGOING: single DEL on the LEFT
+                CGFloat x = minX;
+                delBadge.frame = CGRectMake(x, y, delW, badgeHeight);
+            } else {
+                // INCOMING: single DEL on the RIGHT
+                CGFloat x = maxX - delW;
+                if (x < minX) x = minX;
+                delBadge.frame = CGRectMake(x, y, delW, badgeHeight);
+            }
             [v bringSubviewToFront:delBadge];
         } else if (isEdit) {
             // Single EDT/EDITED badge, centered vertically
             editBadge.layer.cornerRadius = badgeHeight / 2.0;
-            CGFloat x = maxX - editW;
-            if (x < minX) x = minX;
-            editBadge.frame = CGRectMake(x, y, editW, badgeHeight);
+            if (isOutgoing) {
+                // OUTGOING: single EDT/EDITED on the LEFT
+                CGFloat x = minX;
+                editBadge.frame = CGRectMake(x, y, editW, badgeHeight);
+            } else {
+                // INCOMING: single EDT/EDITED on the RIGHT
+                CGFloat x = maxX - editW;
+                if (x < minX) x = minX;
+                editBadge.frame = CGRectMake(x, y, editW, badgeHeight);
+            }
             [v bringSubviewToFront:editBadge];
         }
     }
@@ -906,6 +973,80 @@ static void refreshDeletedBadgesInView(UIView *view) {
     }
 }
 
+- (void)viewListDismissPanGesture:(UIPanGestureRecognizer *)recognizer {
+    %orig;
+    
+    UIView *btn = [(UIView *)self viewWithTag:998811];
+    if (!btn && [(UIView *)self window]) {
+        btn = [[(UIView *)self window] viewWithTag:998811];
+    }
+    if (!btn) {
+        UIResponder *r = [(UIView *)self nextResponder];
+        while (r && ![r isKindOfClass:[UIViewController class]]) {
+            r = r.nextResponder;
+        }
+        if ([r isKindOfClass:[UIViewController class]]) {
+            btn = [((UIViewController *)r).view viewWithTag:998811];
+        }
+    }
+    if (!btn) return;
+    
+    if (recognizer.state == UIGestureRecognizerStateBegan || recognizer.state == UIGestureRecognizerStateChanged) {
+        CGPoint translation = [recognizer translationInView:(UIView *)self];
+        if (translation.y > 0) {
+            CGFloat threshold = 160.0;
+            CGFloat progress = fmax(0.0, fmin(1.0, translation.y / threshold));
+            CGFloat value = 1.0 - progress;
+            btn.alpha = value;
+            if (value < 0.99) {
+                CGFloat scale = 0.85 + 0.15 * value;
+                btn.transform = CGAffineTransformMakeScale(scale, scale);
+            } else {
+                btn.transform = CGAffineTransformIdentity;
+            }
+        } else {
+            btn.alpha = 1.0;
+            btn.transform = CGAffineTransformIdentity;
+        }
+    } else if (recognizer.state == UIGestureRecognizerStateEnded || recognizer.state == UIGestureRecognizerStateCancelled) {
+        CGPoint translation = [recognizer translationInView:(UIView *)self];
+        CGPoint velocity = [recognizer velocityInView:(UIView *)self];
+        
+        BOOL shouldDismiss = (translation.y > 200.0) || (translation.y > 5.0 && velocity.y > 200.0);
+        if (shouldDismiss) {
+            [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+                btn.alpha = 0.0;
+                btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
+            } completion:^(BOOL finished) {
+                [btn removeFromSuperview];
+            }];
+        } else {
+            [UIView animateWithDuration:0.25 delay:0.0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+                btn.alpha = 1.0;
+                btn.transform = CGAffineTransformIdentity;
+            } completion:nil];
+        }
+    }
+}
+
+- (void)willMoveToWindow:(UIWindow *)newWindow {
+    %orig;
+    if (!newWindow) {
+        UIView *btn = [(UIView *)self viewWithTag:998811];
+        if (!btn && [(UIView *)self window]) {
+            btn = [[(UIView *)self window] viewWithTag:998811];
+        }
+        if (btn && btn.alpha > 0.05) {
+            [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+                btn.alpha = 0.0;
+                btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
+            } completion:^(BOOL finished) {
+                [btn removeFromSuperview];
+            }];
+        }
+    }
+}
+
 %end
 
 @interface _TtC20StoryContainerScreen20StoryContainerScreen : UIViewController
@@ -931,6 +1072,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
 - (void)viewWillDisappear:(BOOL)animated {
     %orig;
     customLog2(@"[Stories] StoryContainerScreen viewWillDisappear: animated=%d", animated);
+    [MediaSaver detachFromController:self animated:animated];
 }
 
 %end
@@ -1081,7 +1223,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
     UIView *recView = rec.view;
     if (touch && recView) {
         CGPoint loc = [touch locationInView:recView];
-        UIView *btn = [recView viewWithTag:998833] ?: ([recView viewWithTag:998811] ?: ([recView viewWithTag:998855] ?: [recView viewWithTag:998866]));
+        UIView *btn = [recView viewWithTag:998833] ?: ([recView viewWithTag:998811] ?: ([recView viewWithTag:998855] ?: ([recView viewWithTag:998856] ?: [recView viewWithTag:998866])));
         if (btn && !btn.hidden && btn.alpha > 0.05) {
             CGPoint btnLoc = [recView convertPoint:loc toView:btn];
             if ([btn pointInside:btnLoc withEvent:event]) {

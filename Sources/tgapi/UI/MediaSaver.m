@@ -874,7 +874,7 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
     }
     
     if (animated) {
-        [UIView animateWithDuration:0.10 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+        [UIView animateWithDuration:0.20 delay:0.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
             btn.alpha = 0.0;
             btn.transform = CGAffineTransformMakeScale(0.85, 0.85);
         } completion:^(BOOL finished) {

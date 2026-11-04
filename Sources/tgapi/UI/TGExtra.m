@@ -249,6 +249,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		if (!toggle || ![toggle isKindOfClass:[UISwitch class]]) {
 			toggle = [[UISwitch alloc] init];
 		}
+		toggle.onTintColor = [UIColor systemBlueColor];
 
 		NSString *switchKey = [self switchKeyForIndexPath:indexPath];
 		toggle.on = [[NSUserDefaults standardUserDefaults] boolForKey:switchKey];
@@ -277,6 +278,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		if (!toggle || ![toggle isKindOfClass:[UISwitch class]]) {
 			toggle = [[UISwitch alloc] init];
 		}
+		toggle.onTintColor = [UIColor systemBlueColor];
 
 		NSString *switchKey = [self switchKeyForIndexPath:indexPath];
 		toggle.on = [[NSUserDefaults standardUserDefaults] boolForKey:switchKey];
@@ -293,44 +295,30 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		cell.imageView.image = nil;
 
 		if (indexPath.row == 0) {
-			cell.imageView.image = [UIImage systemImageNamed:@"nosign"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"DISABLE_ALL_ADS_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"DISABLE_ALL_ADS_SUBTITLE");
 		}
 		else if (indexPath.row == 1) {
-			cell.imageView.image = [UIImage systemImageNamed:@"lock.open.fill"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"ENABLE_SAVING_PROTECTED_CONTENT_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"ENABLE_SAVING_PROTECTED_CONTENT_SUBTITLE");
 		}
 		else if (indexPath.row == 2) {
-			cell.imageView.image = [UIImage systemImageNamed:@"trash.slash.fill"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"ANTI_REVOKE_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"ANTI_REVOKE_SUBTITLE");
 		}
 		else if (indexPath.row == 3) {
-			cell.imageView.image = [UIImage systemImageNamed:@"clock.arrow.circlepath"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"ANTI_AUTO_DELETE_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"ANTI_AUTO_DELETE_SUBTITLE");
 		}
 		else if (indexPath.row == 4) {
-			cell.imageView.image = [UIImage systemImageNamed:@"camera.fill"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"ANTI_SCREENSHOT_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"ANTI_SCREENSHOT_SUBTITLE");
 		}
 		else if (indexPath.row == 5) {
-			cell.imageView.image = [UIImage systemImageNamed:@"eye.fill"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"ANTI_SELF_DESTRUCT_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"ANTI_SELF_DESTRUCT_SUBTITLE");
 		}
 		else if (indexPath.row == 6) {
-			cell.imageView.image = [UIImage systemImageNamed:@"mic.fill"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"SEND_AS_VOICE_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"SEND_AS_VOICE_SUBTITLE");
 		}
@@ -339,6 +327,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 		if (!toggle || ![toggle isKindOfClass:[UISwitch class]]) {
 			toggle = [[UISwitch alloc] init];
 		}
+		toggle.onTintColor = [UIColor systemBlueColor];
 
 		NSString *switchKey = [self switchKeyForIndexPath:indexPath];
 		toggle.on = [[NSUserDefaults standardUserDefaults] boolForKey:switchKey];
@@ -353,9 +342,8 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 	else if (indexPath.section == 3) { // File Picker Fix
 		if (indexPath.row == 0) {
 			cell = [self switchCellFromTableView:tableView];
+			cell.imageView.image = nil;
 
-			cell.imageView.image = [UIImage systemImageNamed:@"folder.fill.badge.gear"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"FIX_FILE_PICKER_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"FIX_FILE_PICKER_SUBTITLE");
 
@@ -363,6 +351,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 			if (!toggle || ![toggle isKindOfClass:[UISwitch class]]) {
 				toggle = [[UISwitch alloc] init];
 			}
+			toggle.onTintColor = [UIColor systemBlueColor];
 
 			NSString *switchKey = [self switchKeyForIndexPath:indexPath];
 			toggle.on = [[NSUserDefaults standardUserDefaults] boolForKey:switchKey];
@@ -380,8 +369,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 
 		    cell.textLabel.text = TGLoc(@"CLEAR_FILE_PICKER_CACHE_TITLE");
 		    cell.detailTextLabel.text = TGLoc(@"CLEAR_FILE_PICKER_CACHE_SUBTITLE");
-		    cell.imageView.image = [UIImage systemImageNamed:@"trash"];
-		    cell.imageView.tintColor = [UIColor redColor];
 
 		    UIActivityIndicatorView *loadingIcon = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
 		    [loadingIcon startAnimating];
@@ -410,9 +397,8 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 	else if (indexPath.section == 4) { // Fake Location
 		if (indexPath.row == 0) {
 			cell = [self switchCellFromTableView:tableView];
+			cell.imageView.image = nil;
 
-			cell.imageView.image = [UIImage systemImageNamed:@"location.circle.fill"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 			cell.textLabel.text = TGLoc(@"ENABLE_FAKE_LOCATION_TITLE");
 			cell.detailTextLabel.text = TGLoc(@"ENABLE_FAKE_LOCATION_SUBTITLE");
 
@@ -420,6 +406,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 			if (!toggle || ![toggle isKindOfClass:[UISwitch class]]) {
 				toggle = [[UISwitch alloc] init];
 			}
+			toggle.onTintColor = [UIColor systemBlueColor];
 
 			NSString *switchKey = [self switchKeyForIndexPath:indexPath];
 			toggle.on = [[NSUserDefaults standardUserDefaults] boolForKey:switchKey];
@@ -434,6 +421,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 
 		if (indexPath.row == 1) {
 			cell = [self normalCellFromTableView:tableView];
+			cell.imageView.image = nil;
 
 			CGFloat savedLongitude = [[NSUserDefaults standardUserDefaults] floatForKey:FAKE_LONGITUDE_KEY];
 			CGFloat savedLatitude = [[NSUserDefaults standardUserDefaults] floatForKey:FAKE_LATITUDE_KEY];
@@ -447,8 +435,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 
 			cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
 			cell.accessoryView = nil;
-			cell.imageView.image = [UIImage systemImageNamed:@"map.fill"];
-			cell.imageView.tintColor = [self dynamicColorBW];
 
 			cell.textLabel.numberOfLines = 0;
 			cell.detailTextLabel.numberOfLines = 0;
