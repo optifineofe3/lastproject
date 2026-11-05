@@ -1,6 +1,5 @@
 #import <UIKit/UIKit.h>
 #import <UIKit/UIGestureRecognizerSubclass.h>
-#import <os/lock.h>
 #import "Headers.h"
 #import "../Headers.h"
 #import "MediaSaver.h"
@@ -276,58 +275,19 @@ static CGRect getContentFrameOfNode(ASDisplayNode *node) {
     return b;
 }
 
-static inline BOOL isMainMessageNode(ASDisplayNode *node) {
+static BOOL isMainMessageNode(ASDisplayNode *node) {
     if (!node) return NO;
-    Class cls = object_getClass(node);
-    if (!cls) return NO;
-
-    static CFMutableSetRef sMatchClasses = NULL;
-    static CFMutableSetRef sRejectClasses = NULL;
-    static os_unfair_lock sLock = OS_UNFAIR_LOCK_INIT;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        sMatchClasses = CFSetCreateMutable(kCFAllocatorDefault, 0, NULL);
-        sRejectClasses = CFSetCreateMutable(kCFAllocatorDefault, 0, NULL);
-    });
-
-    os_unfair_lock_lock(&sLock);
-    if (CFSetContainsValue(sMatchClasses, (__bridge const void *)cls)) {
-        os_unfair_lock_unlock(&sLock);
+    NSString *className = NSStringFromClass([node class]);
+    if (![className containsString:@"ChatMessage"]) return NO;
+    if ([className containsString:@"Content"]) return NO;
+    if ([className containsString:@"Button"]) return NO;
+    if ([className containsString:@"Accessory"]) return NO;
+    if ([className containsString:@"AuthorContext"]) return NO;
+    if ([className containsString:@"TodoItemNode"]) return NO;
+    if ([className containsString:@"BubbleItemNode"] || [className containsString:@"ChatMessageItemView"] || [className containsString:@"AnimatedStickerItemNode"] || [className containsString:@"StickerItemNode"] || [className containsString:@"InstantVideoItemNode"]) {
         return YES;
     }
-    if (CFSetContainsValue(sRejectClasses, (__bridge const void *)cls)) {
-        os_unfair_lock_unlock(&sLock);
-        return NO;
-    }
-    os_unfair_lock_unlock(&sLock);
-
-    NSString *className = NSStringFromClass(cls);
-    BOOL match = NO;
-    if ([className containsString:@"ChatMessage"] &&
-        ![className containsString:@"Content"] &&
-        ![className containsString:@"Button"] &&
-        ![className containsString:@"Accessory"] &&
-        ![className containsString:@"AuthorContext"] &&
-        ![className containsString:@"TodoItemNode"]) {
-        if ([className containsString:@"BubbleItemNode"] ||
-            [className containsString:@"ChatMessageItemView"] ||
-            [className containsString:@"ChatMessageItemNode"] ||
-            [className containsString:@"AnimatedStickerItemNode"] ||
-            [className containsString:@"StickerItemNode"] ||
-            [className containsString:@"InstantVideoItemNode"]) {
-            match = YES;
-        }
-    }
-
-    os_unfair_lock_lock(&sLock);
-    if (match) {
-        CFSetAddValue(sMatchClasses, (__bridge const void *)cls);
-    } else {
-        CFSetAddValue(sRejectClasses, (__bridge const void *)cls);
-    }
-    os_unfair_lock_unlock(&sLock);
-
-    return match;
+    return NO;
 }
 
 static BOOL doesNodeHaveMedia(ASDisplayNode *node) {
@@ -361,6 +321,28 @@ static void cleanRogueBadges(UIView *view, UIView *keepDel, UIView *keepEdit) {
             cleanRogueBadges(sub, keepDel, keepEdit);
         }
     }
+}
+
+static NSString *getNodeText(ASDisplayNode *node) {
+    if (!node || !node.isNodeLoaded) return nil;
+    UIView *v = node.view;
+    if (!v) return nil;
+    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:v];
+    while (queue.count > 0) {
+        UIView *cur = queue.firstObject;
+        [queue removeObjectAtIndex:0];
+        if (cur.tag == 998855 || cur.tag == 998856 || cur.tag == 998866 || cur.tag == 998811 || cur.tag == 998850) continue;
+        if ([cur isKindOfClass:[UILabel class]]) {
+            NSString *t = [(UILabel *)cur text];
+            if (t.length > 0 && ![t isEqualToString:@"DEL"] && ![t isEqualToString:@"EDT"] && ![t isEqualToString:@"EDITED"]) {
+                return t;
+            }
+        }
+        for (UIView *sub in cur.subviews) {
+            [queue addObject:sub];
+        }
+    }
+    return nil;
 }
 
 static BOOL isNodeOutgoing(ASDisplayNode *node, CGRect bFrame, CGFloat rowWidth) {
@@ -402,9 +384,13 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     UIView *v = node.view;
     if (!v) return;
 
-    // Attach single-tap recognizer to message node for showing edit history on tap (once per view)
-    if (!objc_getAssociatedObject(v, "TweakTapAttached")) {
-        objc_setAssociatedObject(v, "TweakTapAttached", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // Attach single-tap recognizer to message node for showing edit history on tap
+    if (![v viewWithTag:998850]) {
+        UIView *marker = [[UIView alloc] initWithFrame:CGRectZero];
+        marker.tag = 998850;
+        marker.hidden = YES;
+        [v addSubview:marker];
+
         UITapGestureRecognizer *bubbleTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleBubbleTap:)];
         bubbleTap.cancelsTouchesInView = NO;
         bubbleTap.delegate = (id<UIGestureRecognizerDelegate>)[MediaSaver shared];
@@ -412,50 +398,38 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     }
     objc_setAssociatedObject(v, "TweakMessageNode", node, OBJC_ASSOCIATION_ASSIGN);
 
-    // Node-level caching for message info:
-    NSDictionary *info = nil;
-    id cachedInfo = objc_getAssociatedObject(node, "TweakMsgInfo");
-    if ([cachedInfo isKindOfClass:[NSDictionary class]]) {
-        info = (NSDictionary *)cachedInfo;
-    } else {
-        info = [NSClassFromString(@"TLParser") getMessageInfoFromNode:node];
-        if (!info || !info[@"msgId"]) {
-            NSNumber *fbId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
-            if (fbId) {
-                info = @{ @"msgId": fbId, @"peerId": @(0), @"isOutgoing": @(NO), @"text": @"" };
-            }
-        }
-        if (info && info[@"msgId"]) {
-            objc_setAssociatedObject(node, "TweakMsgInfo", info, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    // Node-level caching for message ID
+    NSNumber *msgId = objc_getAssociatedObject(node, "TweakMsgId");
+    if (!msgId) {
+        msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
+        if (msgId) {
+            objc_setAssociatedObject(node, "TweakMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     }
 
-    NSNumber *msgId = info[@"msgId"];
-    NSNumber *peerId = info[@"peerId"];
-    NSString *text = info[@"text"];
-    BOOL isOutgoingFromInfo = [info[@"isOutgoing"] boolValue];
+    BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
 
-    BOOL isDel = (msgId != nil && ([NSClassFromString(@"TLParser") isDeletedWithMsgId:msgId peerId:peerId] ||
-                                   [NSClassFromString(@"TLParser") isDeleted:msgId]));
-    BOOL isEdit = (msgId != nil && [NSClassFromString(@"TLParser") isEditedWithMsgId:msgId peerId:peerId currentText:text]);
+    // Node-level caching for edited state
+    NSNumber *cachedIsEdit = objc_getAssociatedObject(node, "TweakIsEdit");
+    BOOL isEdit = NO;
+    if (cachedIsEdit != nil) {
+        isEdit = [cachedIsEdit boolValue];
+    } else {
+        isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
+        objc_setAssociatedObject(node, "TweakIsEdit", @(isEdit), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 
-    // FAST PATH: Unedited and undeleted message (99.9% of messages during scrolling)
+    // Fast path: if unedited and undeleted, hide existing badges and exit instantly (smooth 120 FPS scrolling)
     if (!isDel && !isEdit) {
-        if (objc_getAssociatedObject(node, "TweakHadBadge")) {
-            for (UIView *sub in v.subviews) {
-                if (sub.tag == 998855 || sub.tag == 998856 || sub.tag == 998866) {
-                    sub.hidden = YES;
-                }
+        for (UIView *sub in v.subviews) {
+            if (sub.tag == 998855 || sub.tag == 998856 || sub.tag == 998866) {
+                sub.hidden = YES;
             }
-            objc_setAssociatedObject(node, "TweakHadBadge", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         return;
     }
 
-    objc_setAssociatedObject(node, "TweakHadBadge", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-
-    // SLOW PATH: Message is actually deleted or edited.
-    // Find direct badges on v and clean up duplicates
+    // Find direct badges on v and remove any duplicates or rogue badges in subviews
     UILabel *delBadge = nil;
     UILabel *editBadge = nil;
     NSMutableArray<UIView *> *extraBadges = [NSMutableArray array];
@@ -477,9 +451,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     for (UIView *extra in extraBadges) {
         [extra removeFromSuperview];
     }
-    if (extraBadges.count > 0) {
-        cleanRogueBadges(v, delBadge, editBadge);
-    }
+    cleanRogueBadges(v, delBadge, editBadge);
 
     UIView *origView = [v viewWithTag:998866];
     if (origView) origView.hidden = YES;
@@ -507,7 +479,6 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         delBadge.hidden = NO;
         if (msgId) {
             objc_setAssociatedObject(delBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            if (peerId) objc_setAssociatedObject(delBadge, "TweakBadgePeerId", peerId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     } else {
         if (delBadge) delBadge.hidden = YES;
@@ -533,7 +504,6 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         editBadge.hidden = NO;
         if (msgId) {
             objc_setAssociatedObject(editBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            if (peerId) objc_setAssociatedObject(editBadge, "TweakBadgePeerId", peerId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         objc_setAssociatedObject(editBadge, "TweakBadgeNode", node, OBJC_ASSOCIATION_ASSIGN);
     } else {
@@ -554,7 +524,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     CGFloat maxX = rowWidth - 5.0;
     CGFloat minX = 5.0;
 
-    BOOL isOutgoing = isOutgoingFromInfo || isNodeOutgoing(node, bFrame, rowWidth);
+    BOOL isOutgoing = isNodeOutgoing(node, bFrame, rowWidth);
 
     CGFloat availableSpace = isOutgoing ? bFrame.origin.x : (rowWidth - CGRectGetMaxX(bFrame));
     BOOL hasPlentyOfSpace = (availableSpace >= 85.0);
@@ -565,7 +535,14 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     // Check single-line crowding: only if crowded (not plenty of space) and text is long (>= 34 chars)
     BOOL isSingleLineCrowded = NO;
     if (!isMultiLine && isDel && isEdit && !hasPlentyOfSpace) {
-        if (text && text.length >= 34) {
+        NSString *nodeText = nil;
+        if (msgId) {
+            nodeText = (NSString *)[NSClassFromString(@"TLParser") getOriginalTextForId:msgId];
+        }
+        if (!nodeText) {
+            nodeText = getNodeText(node);
+        }
+        if (nodeText && nodeText.length >= 34) {
             isSingleLineCrowded = YES;
         }
     }
@@ -681,7 +658,6 @@ static void refreshDeletedBadgesInView(UIView *view) {
     ASDisplayNode *node = objc_getAssociatedObject(view, "TweakMessageNode");
     if (node) {
         objc_setAssociatedObject(node, "TweakIsEdit", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(node, "TweakMsgInfo", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         updateDeletedBadgeForNode(node);
     }
     NSString *className = NSStringFromClass([view class]);
@@ -713,6 +689,8 @@ static void refreshDeletedBadgesInView(UIView *view) {
             [v addGestureRecognizer:doubleTap];
         }
         [MediaSaver attachInstantVideoButtonToNode:self];
+    } else if (isMainMessageNode(self)) {
+        updateDeletedBadgeForNode(self);
     }
 }
 
@@ -721,6 +699,8 @@ static void refreshDeletedBadgesInView(UIView *view) {
     NSString *className = NSStringFromClass([self class]);
     if ([className containsString:@"InstantVideo"] || [className containsString:@"OverlayInstantVideoNode"]) {
         [MediaSaver attachInstantVideoButtonToNode:self];
+    } else if (isMainMessageNode(self)) {
+        updateDeletedBadgeForNode(self);
     }
 }
 
@@ -1244,6 +1224,15 @@ static void animateOutStoryDownloadButton(UIView *btn, NSTimeInterval duration) 
 
 - (void)layoutSubviews {
     %orig;
+    ASDisplayNode *node = nil;
+    @try {
+        if ([self respondsToSelector:@selector(asyncdisplaykit_node)]) {
+            node = [(_ASDisplayView *)self asyncdisplaykit_node];
+        }
+    } @catch (NSException *e) {}
+    if (node && isMainMessageNode(node)) {
+        updateDeletedBadgeForNode(node);
+    }
 }
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
