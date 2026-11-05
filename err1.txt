@@ -1,0 +1,1052 @@
+Run THEOS_PACKAGE_SCHEME=rootless make clean package FINALPACKAGE=1 STRIP=0
+  
+==> Cleaning…
+> Making all for tweak Tweak…
+==> Preprocessing Sources/tgapi/UI/UIHooks.xm…
+==> Preprocessing Sources/tgapi/UI/UIHooks.xm…
+==> Preprocessing Sources/tgapi/SideloadFix.xm…
+==> Preprocessing Sources/tgapi/LocationHook.xm…
+==> Preprocessing Sources/tgapi/FilePickerFix.xm…
+==> Preprocessing Sources/tgapi/Hooks.xm…
+==> Compiling module interface (arm64)…
+==> Compiling Sources/tgapi/fishhook/fishhook.c (arm64e)…
+==> Compiling Sources/tgapi/fishhook/fishhook.c (arm64)…
+==> Preprocessing Sources/tgapi/LocationHook.xm…
+==> Preprocessing Sources/tgapi/SideloadFix.xm…
+==> Preprocessing Sources/tgapi/FilePickerFix.xm…
+==> Preprocessing Sources/tgapi/Hooks.xm…
+==> Compiling module interface (arm64e)…
+Sources/tgapi/TLParser.swift:476:18: error: static methods may only be declared on a type
+error: emit-module command failed with exit code 1 (use -v to see invocation)
+ 474 |     }
+ 475 | 
+ 476 |     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
+     |                  `- error: static methods may only be declared on a type
+ 477 |         var editDate: Int32?
+ 478 |         var origDate: Int32?
+Sources/tgapi/TLParser.swift:619:18: error: static methods may only be declared on a type
+ 617 |     }
+ 618 | 
+ 619 |     @objc static func getOriginalTextForId(_ msgId: NSNumber) -> NSString? {
+     |                  `- error: static methods may only be declared on a type
+rm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64/Sources/tgapi/SideloadFix.xm.mm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64/Sources/tgapi/LocationHook.xm.mm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64/Sources/tgapi/FilePickerFix.xm.mm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64/Sources/tgapi/Hooks.xm.mm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64/Sources/tgapi/UI/UIHooks.xm.mm
+ 620 |         let id = msgId.int32Value
+ 621 |         if let text = editedTextsQueue.sync(execute: { () -> String? in
+Sources/tgapi/TLParser.swift:638:18: error: static methods may only be declared on a type
+ 636 |     /// Dynamically extracts message.id.id from a ChatMessageItem using Mirror reflection first,
+ 637 |     /// then precompiled regex fallback if needed.
+ 638 |     @objc static func getMessageId(from item: Any) -> NSNumber? {
+     |                  `- error: static methods may only be declared on a type
+ 639 |         let unwrapped = unwrapOptional(item)
+ 640 |         
+Sources/tgapi/TLParser.swift:697:20: error: static methods may only be declared on a type
+ 695 |     }
+ 696 | 
+ 697 |     private static func extractId(fromMessage msg: Any) -> NSNumber? {
+     |                    `- error: static methods may only be declared on a type
+ 698 |         let unwrapped = unwrapOptional(msg)
+ 699 |         let msgMirror = Mirror(reflecting: unwrapped)
+Sources/tgapi/TLParser.swift:714:18: error: static methods may only be declared on a type
+ 712 | 
+ 713 |     /// Dynamically extracts message ID from a ChatMessageBubbleItemNode
+ 714 |     @objc static func getMessageIdFromNode(_ node: Any) -> NSNumber? {
+     |                  `- error: static methods may only be declared on a type
+ 715 |         var currentMirror: Mirror? = Mirror(reflecting: node)
+ 716 |         while let mirror = currentMirror {
+Sources/tgapi/TLParser.swift:757:18: error: static methods may only be declared on a type
+ 755 |     }
+ 756 | 
+ 757 |     @objc static func getDebugDumpFromNode(_ node: Any) -> NSString {
+     |                  `- error: static methods may only be declared on a type
+ 758 |         var currentMirror: Mirror? = Mirror(reflecting: node)
+ 759 |         while let mirror = currentMirror {
+Sources/tgapi/TLParser.swift:773:18: error: static methods may only be declared on a type
+ 771 |     }
+ 772 | 
+ 773 |     @objc static func getPeerIdFromNode(_ node: Any) -> NSNumber? {
+     |                  `- error: static methods may only be declared on a type
+ 774 |         // Try to sniff sharedContext from any node that might have it
+ 775 |         if sharedContext == nil, let obj = node as? NSObject {
+Sources/tgapi/TLParser.swift:818:20: error: static methods may only be declared on a type
+ 816 |     }
+ 817 | 
+ 818 |     private static func extractId(fromPeer peer: Any) -> NSNumber? {
+     |                    `- error: static methods may only be declared on a type
+ 819 |         let desc = String(describing: peer)
+ 820 |         if let range = desc.range(of: "(id|userId|channelId):\\s*(-?\\d+)", options: .regularExpression) {
+Sources/tgapi/TLParser.swift:843:20: error: static methods may only be declared on a type
+ 841 |     }
+ 842 | 
+ 843 |     private static func extractId(fromPeerId pid: Any) -> NSNumber? {
+     |                    `- error: static methods may only be declared on a type
+ 844 |         if let idVal = pid as? Int64 { return NSNumber(value: idVal) }
+ 845 |         if let idVal = pid as? Int32 { return NSNumber(value: Int64(idVal)) }
+Sources/tgapi/TLParser.swift:864:18: error: static methods may only be declared on a type
+ 862 |     }
+ 863 | 
+ 864 |     @objc static func getCurrentUserId() -> NSNumber? {
+     |                  `- error: static methods may only be declared on a type
+ 865 |         if let context = sharedContext {
+ 866 |             let mirror = Mirror(reflecting: context)
+Sources/tgapi/TLParser.swift:883:18: error: static methods may only be declared on a type
+ 881 |     }
+ 882 | 
+ 883 |     @objc static func isDeleted(_ msgId: NSNumber) -> Bool {
+     |                  `- error: static methods may only be declared on a type
+ 884 |         return deletedIds.contains(msgId.int32Value)
+ 885 |     }
+Sources/tgapi/TLParser.swift:888:20: error: static methods may only be declared on a type
+ 886 | 
+ 887 |     // Deleted indicator is now rendered as a visual DEL pill badge on the cell.
+ 888 |     private static func applyDeletedIndicator(to msgs: [Api.Message]) -> (messages: [Api.Message], changed: Bool) {
+     |                    `- error: static methods may only be declared on a type
+ 889 |         return (msgs, false)
+ 890 |     }
+Sources/tgapi/TLParser.swift:892:20: error: static properties may only be declared on a type
+ 890 |     }
+ 891 |     // IDs of messages that originally had a self-destruct timer (one-time media ttlSeconds)
+ 892 |     private static let selfDestructUdKey = "LeadSelfDestructingIds"
+     |                    `- error: static properties may only be declared on a type
+ 893 |     private static var _selfDestructingMessageIds = Set<Int32>()
+ 894 |     private static var _selfDestructLoaded = false
+Sources/tgapi/TLParser.swift:893:20: error: static properties may only be declared on a type
+ 891 |     // IDs of messages that originally had a self-destruct timer (one-time media ttlSeconds)
+ 892 |     private static let selfDestructUdKey = "LeadSelfDestructingIds"
+ 893 |     private static var _selfDestructingMessageIds = Set<Int32>()
+     |                    `- error: static properties may only be declared on a type
+ 894 |     private static var _selfDestructLoaded = false
+ 895 |     private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+Sources/tgapi/TLParser.swift:894:20: error: static properties may only be declared on a type
+ 892 |     private static let selfDestructUdKey = "LeadSelfDestructingIds"
+ 893 |     private static var _selfDestructingMessageIds = Set<Int32>()
+ 894 |     private static var _selfDestructLoaded = false
+     |                    `- error: static properties may only be declared on a type
+ 895 |     private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+ 896 | 
+Sources/tgapi/TLParser.swift:895:20: error: static properties may only be declared on a type
+ 893 |     private static var _selfDestructingMessageIds = Set<Int32>()
+ 894 |     private static var _selfDestructLoaded = false
+ 895 |     private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+     |                    `- error: static properties may only be declared on a type
+ 896 | 
+ 897 |     private static var selfDestructingMessageIds: Set<Int32> {
+Sources/tgapi/TLParser.swift:897:20: error: static properties may only be declared on a type
+ 895 |     private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+ 896 | 
+ 897 |     private static var selfDestructingMessageIds: Set<Int32> {
+     |                    `- error: static properties may only be declared on a type
+ 898 |         return selfDestructQueue.sync {
+ 899 |             if !_selfDestructLoaded {
+Sources/tgapi/TLParser.swift:908:20: error: static methods may only be declared on a type
+ 906 |     }
+ 907 | 
+ 908 |     private static func addSelfDestructingId(_ id: Int32) {
+     |                    `- error: static methods may only be declared on a type
+ 909 |         guard id != 0 else { return }
+ 910 |         selfDestructQueue.async(flags: .barrier) {
+Sources/tgapi/TLParser.swift:926:18: error: static methods may only be declared on a type
+ 924 |     }
+ 925 | 
+ 926 |     @objc static func isMessageSelfDestructing(_ msgId: NSNumber) -> Bool {
+     |                  `- error: static methods may only be declared on a type
+ 927 |         return selfDestructingMessageIds.contains(msgId.int32Value)
+ 928 |     }
+Sources/tgapi/TLParser.swift:931:20: error: static properties may only be declared on a type
+ 929 | 
+ 930 |     // IDs of messages in chats with auto-delete (ttlPeriod)
+ 931 |     private static var autoDeleteMessageIds = Set<Int32>()
+     |                    `- error: static properties may only be declared on a type
+ 932 | 
+ 933 |     @objc static func isMessageAutoDelete(_ msgId: NSNumber) -> Bool {
+Sources/tgapi/TLParser.swift:933:18: error: static methods may only be declared on a type
+ 931 |     private static var autoDeleteMessageIds = Set<Int32>()
+ 932 | 
+ 933 |     @objc static func isMessageAutoDelete(_ msgId: NSNumber) -> Bool {
+     |                  `- error: static methods may only be declared on a type
+ 934 |         return autoDeleteMessageIds.contains(msgId.int32Value)
+ 935 |     }
+Sources/tgapi/TLParser.swift:937:20: error: static properties may only be declared on a type
+ 935 |     }
+ 936 | 
+ 937 |     private static var isNoForwardsBypassActive: Bool {
+     |                    `- error: static properties may only be declared on a type
+ 938 |         if UserDefaults.standard.object(forKey: "disableForwardRestriction") == nil {
+ 939 |             return true
+Sources/tgapi/TLParser.swift:944:20: error: static properties may only be declared on a type
+ 942 |     }
+ 943 | 
+ 944 |     private static var isAntiSelfDestructActive: Bool {
+     |                    `- error: static properties may only be declared on a type
+ 945 |         if UserDefaults.standard.object(forKey: "LeadAntiSelfDestruct") == nil {
+ 946 |             return true
+Sources/tgapi/TLParser.swift:951:20: error: static properties may only be declared on a type
+ 949 |     }
+ 950 | 
+ 951 |     private static var isAntiRevokeActive: Bool {
+     |                    `- error: static properties may only be declared on a type
+ 952 |         if UserDefaults.standard.object(forKey: "LeadAntiRevoke") == nil {
+ 953 |             return true
+Sources/tgapi/TLParser.swift:958:20: error: static methods may only be declared on a type
+ 956 |     }
+ 957 | 
+ 958 |     private static func stripTTLMedia(_ media: Api.MessageMedia, messageId: Int32) -> (Api.MessageMedia, Bool) {
+     |                    `- error: static methods may only be declared on a type
+ 959 |         guard isAntiSelfDestructActive else { return (media, false) }
+ 960 |         switch media {
+Sources/tgapi/TLParser.swift:982:20: error: static methods may only be declared on a type
+ 980 |     }
+ 981 | 
+ 982 |     private static func stripNoForwards(_ chat: Api.Chat) -> (Api.Chat, Bool) {
+     |                    `- error: static methods may only be declared on a type
+ 983 |         guard isNoForwardsBypassActive ||
+ 984 |               isAntiSelfDestructActive ||
+Sources/tgapi/TLParser.swift:1032:20: error: static methods may only be declared on a type
+1030 |     }
+1031 | 
+1032 |     private static func stripNoForwardsFromChats(_ chats: [Api.Chat]) -> ([Api.Chat], Bool) {
+     |                    `- error: static methods may only be declared on a type
+1033 |         var modified = false
+1034 |         let newChats = chats.map { chat -> Api.Chat in
+Sources/tgapi/TLParser.swift:1044:20: error: static methods may only be declared on a type
+1042 |     }
+1043 |     
+1044 |     private static func stripNoForwardsFromFullChat(_ chatFull: Api.ChatFull) -> (Api.ChatFull, Bool) {
+     |                    `- error: static methods may only be declared on a type
+1045 |         guard isNoForwardsBypassActive ||
+1046 |               isAntiSelfDestructActive ||
+Sources/tgapi/TLParser.swift:1098:20: error: static methods may only be declared on a type
+1096 |     }
+1097 | 
+1098 |     private static func shiftEntities(_ entities: [Api.MessageEntity]?, by offset: Int32) -> [Api.MessageEntity] {
+     |                    `- error: static methods may only be declared on a type
+1099 |         guard let entities = entities else { return [] }
+1100 |         return entities.map { entity in
+Sources/tgapi/TLParser.swift:1127:20: error: static methods may only be declared on a type
+1125 |     }
+1126 | 
+1127 |     private static func applyTTLIndicator(message: String, entities: [Api.MessageEntity]?, shouldApply: Bool) -> (String, [Api.MessageEntity]?) {
+     |                    `- error: static methods may only be declared on a type
+1128 |         var newMessageText = message
+1129 |         var newEntities = entities ?? []
+Sources/tgapi/TLParser.swift:1153:20: error: static methods may only be declared on a type
+1151 |     }
+1152 | 
+1153 |     private static func stripTTLMessage(_ apiMsg: Api.Message) -> (Api.Message, Bool) {
+     |                    `- error: static methods may only be declared on a type
+1154 |         guard case let .message(data) = apiMsg else {
+1155 |             return (apiMsg, false)
+Sources/tgapi/TLParser.swift:1233:20: error: static methods may only be declared on a type
+1231 |     }
+1232 | 
+1233 |     private static func stripTTLUpdates(_ updates: [Api.Update]) -> ([Api.Update], Bool) {
+     |                    `- error: static methods may only be declared on a type
+1234 |         var modified = false
+1235 |         let result = updates.map { update -> Api.Update in
+Sources/tgapi/TLParser.swift:1245:20: error: static methods may only be declared on a type
+1243 |     }
+1244 | 
+1245 |     private static func stripTTLUpdate(_ update: Api.Update) -> (Api.Update, Bool) {
+     |                    `- error: static methods may only be declared on a type
+1246 |         switch update {
+1247 |         case let .updateNewMessage(data):
+Sources/tgapi/TLParser.swift:1314:18: error: static methods may only be declared on a type
+1312 |     }
+1313 | 
+1314 |     @objc static func stripAntiSelfDestruct(_ data: NSData) -> NSData? {
+     |                  `- error: static methods may only be declared on a type
+1315 |         let isAntiSelfDestruct = isAntiSelfDestructActive
+1316 |         let isNoForwardsBypass = isNoForwardsBypassActive
+Sources/tgapi/TLParser.swift:1581:18: error: static methods may only be declared on a type
+1579 |     }
+1580 | 
+1581 |     @objc static func handleResponse(_ data: NSData, functionID: NSNumber) -> NSData? {
+     |                  `- error: static methods may only be declared on a type
+1582 |         // Returns patched data only if something was actually modified.
+1583 |         // Returning nil means "no change" — caller uses original data as-is.
+Sources/tgapi/TLParser.swift:1594:20: error: static methods may only be declared on a type
+1592 |     }
+1593 | 
+1594 |     private static func parseForwardRequest(_ data: NSData) -> ForwardRequest? {
+     |                    `- error: static methods may only be declared on a type
+1595 |         let buffer = Buffer(data: data as Data)
+1596 |         let reader = BufferReader(buffer)
+Sources/tgapi/TLParser.swift:1642:12: error: static methods may only be declared on a type
+1640 | 
+1641 |     @objc(handleForwardRequest:)
+1642 |     static func handleForwardRequest(_ data: NSData) -> Bool {
+     |            `- error: static methods may only be declared on a type
+1643 |         NSLog("[Lead] handleForwardRequest called")
+1644 |         guard let request = parseForwardRequest(data) else { 
+Sources/tgapi/TLParser.swift:1663:12: error: static methods may only be declared on a type
+1661 | 
+1662 |     @objc(createGetMessagesRequest:)
+1663 |     static func createGetMessagesRequest(fromForward data: NSData) -> NSData? {
+     |            `- error: static methods may only be declared on a type
+1664 |         guard let request = parseForwardRequest(data) else { return nil }
+1665 |         
+Sources/tgapi/TLParser.swift:1679:12: error: static methods may only be declared on a type
+1677 | 
+1678 |     @objc(createSendMediaRequests:originalForwardData:)
+1679 |     static func createSendMediaRequests(_ response: Any, originalForwardData: NSData) -> [NSData] {
+     |            `- error: static methods may only be declared on a type
+1680 |         guard let messagesResponse = response as? Api.messages.Messages else { 
+1681 |             NSLog("[Lead] Failed to cast response to Api.messages.Messages")
+Sources/tgapi/TLParser.swift:1787:12: error: static methods may only be declared on a type
+1785 | 
+1786 |     @objc(parseMessagesResponse:)
+1787 |     static func parseMessagesResponse(_ data: NSData) -> Any? {
+     |            `- error: static methods may only be declared on a type
+1788 |         var workingData = data as Data
+1789 |         if workingData.count >= 4 {
+Sources/tgapi/TLParser.swift:1811:18: error: static methods may only be declared on a type
+1809 |     }
+1810 | 
+1811 |     @objc static func fakeUpdatesResponse() -> NSData {
+     |                  `- error: static methods may only be declared on a type
+1812 |         let outBuf = Buffer()
+1813 |         let updates = Api.Updates.updates(Api.Updates.Cons_updates(updates: [], users: [], chats: [], date: Int32(Date().timeIntervalSince1970), seq: 0))
+Sources/tgapi/TLParser.swift:1818:12: error: static methods may only be declared on a type
+1816 |     }
+1817 | 
+1818 |     static func serializeBoxed(_ obj: Any) -> NSData {
+     |            `- error: static methods may only be declared on a type
+1819 |         let outBuf = Buffer()
+1820 |         Api.serializeObject(obj, buffer: outBuf, boxed: true)
+Sources/tgapi/TLParser.swift:1826:20: error: static methods may only be declared on a type
+1824 |     // MARK: - Targeted Media File Resolver
+1825 | 
+1826 |     private static func safeGetProperty(_ obj: AnyObject, _ key: String) -> Any? {
+     |                    `- error: static methods may only be declared on a type
+1827 |         let sel = NSSelectorFromString(key)
+1828 |         if obj.responds(to: sel) {
+Sources/tgapi/TLParser.swift:1842:20: error: static methods may only be declared on a type
+1840 |     }
+1841 | 
+1842 |     private static func findCentralItemNode(from vc: UIViewController) -> AnyObject? {
+     |                    `- error: static methods may only be declared on a type
+1843 |         guard vc.isViewLoaded, let rootView = vc.view else { return nil }
+1844 | 
+Sources/tgapi/TLParser.swift:1879:18: error: static methods may only be declared on a type
+1877 |     }
+1878 | 
+1879 |     @objc static func isVideoFile(atPath path: String) -> Bool {
+     |                  `- error: static methods may only be declared on a type
+1880 |         guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+1881 |         defer { handle.closeFile() }
+Sources/tgapi/TLParser.swift:1900:18: error: static methods may only be declared on a type
+1898 |     }
+1899 | 
+1900 |     @objc static func findVideoFilePath(fromTarget target: Any?) -> String? {
+     |                  `- error: static methods may only be declared on a type
+1901 |         return findMediaFilePath(fromTarget: target, isVideoOnly: true)
+1902 |     }
+Sources/tgapi/TLParser.swift:1904:18: error: static methods may only be declared on a type
+1902 |     }
+1903 | 
+1904 |     @objc static func findMediaFilePath(fromTarget target: Any?) -> String? {
+     |                  `- error: static methods may only be declared on a type
+1905 |         return findMediaFilePath(fromTarget: target, isVideoOnly: false)
+1906 |     }
+Sources/tgapi/TLParser.swift:1908:20: error: static methods may only be declared on a type
+1906 |     }
+1907 | 
+1908 |     private static func findMediaFilePath(fromTarget target: Any?, isVideoOnly: Bool) -> String? {
+     |                    `- error: static methods may only be declared on a type
+1909 |         guard let target = target else {
+1910 |             customLogMsg("[TLParser] findMediaFilePath: target is nil")
+Sources/tgapi/TLParser.swift:2099:20: error: static methods may only be declared on a type
+2097 |     }
+2098 | 
+2099 |     private static func collectNodesAndViews(from view: UIView, into list: inout [Any]) {
+     |                    `- error: static methods may only be declared on a type
+2100 |         if let node = safeGetProperty(view, "asyncdisplaykit_node") {
+2101 |             list.append(node)
+Sources/tgapi/TLParser.swift:2109:20: error: static methods may only be declared on a type
+2107 |     }
+2108 | 
+2109 |     private static func extractMediaInfo(from obj: Any, visited: inout Set<ObjectIdentifier>, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String], isVideoSearch: Bool = false, depth: Int = 0) {
+     |                    `- error: static methods may only be declared on a type
+2110 |         if depth > 6 { return }
+2111 | 
+Sources/tgapi/TLParser.swift:2208:20: error: static methods may only be declared on a type
+2206 |     }
+2207 | 
+2208 |     private static func parseIdentifiers(fromText text: String, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String], isVideoSearch: Bool = false) {
+     |                    `- error: static methods may only be declared on a type
+2209 |         if text.isEmpty { return }
+2210 | 
+Sources/tgapi/TLParser.swift:2276:20: error: static methods may only be declared on a type
+2274 |     }
+2275 | 
+2276 |     private static func collectMediaFolders() -> [String] {
+     |                    `- error: static methods may only be declared on a type
+2277 |         var folders: [String] = []
+2278 |         let fm = FileManager.default
+Sources/tgapi/TLParser.swift:2347:1: error: extraneous '}' at top level
+2345 |         return folders
+2346 |     }
+2347 | }
+     | `- error: extraneous '}' at top level
+2348 | 
+Sources/tgapi/TLParser.swift:476:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 474 |     }
+ 475 | 
+ 476 |     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 477 |         var editDate: Int32?
+ 478 |         var origDate: Int32?
+Sources/tgapi/TLParser.swift:619:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 617 |     }
+ 618 | 
+ 619 |     @objc static func getOriginalTextForId(_ msgId: NSNumber) -> NSString? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 620 |         let id = msgId.int32Value
+ 621 |         if let text = editedTextsQueue.sync(execute: { () -> String? in
+Sources/tgapi/TLParser.swift:638:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 636 |     /// Dynamically extracts message.id.id from a ChatMessageItem using Mirror reflection first,
+ 637 |     /// then precompiled regex fallback if needed.
+ 638 |     @objc static func getMessageId(from item: Any) -> NSNumber? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 639 |         let unwrapped = unwrapOptional(item)
+ 640 |         
+Sources/tgapi/TLParser.swift:714:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 712 | 
+ 713 |     /// Dynamically extracts message ID from a ChatMessageBubbleItemNode
+ 714 |     @objc static func getMessageIdFromNode(_ node: Any) -> NSNumber? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 715 |         var currentMirror: Mirror? = Mirror(reflecting: node)
+ 716 |         while let mirror = currentMirror {
+Sources/tgapi/TLParser.swift:757:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 755 |     }
+ 756 | 
+ 757 |     @objc static func getDebugDumpFromNode(_ node: Any) -> NSString {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 758 |         var currentMirror: Mirror? = Mirror(reflecting: node)
+ 759 |         while let mirror = currentMirror {
+Sources/tgapi/TLParser.swift:773:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 771 |     }
+ 772 | 
+ 773 |     @objc static func getPeerIdFromNode(_ node: Any) -> NSNumber? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 774 |         // Try to sniff sharedContext from any node that might have it
+ 775 |         if sharedContext == nil, let obj = node as? NSObject {
+Sources/tgapi/TLParser.swift:864:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 862 |     }
+ 863 | 
+ 864 |     @objc static func getCurrentUserId() -> NSNumber? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 865 |         if let context = sharedContext {
+ 866 |             let mirror = Mirror(reflecting: context)
+Sources/tgapi/TLParser.swift:883:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 881 |     }
+ 882 | 
+ 883 |     @objc static func isDeleted(_ msgId: NSNumber) -> Bool {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 884 |         return deletedIds.contains(msgId.int32Value)
+ 885 |     }
+Sources/tgapi/TLParser.swift:926:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 924 |     }
+ 925 | 
+ 926 |     @objc static func isMessageSelfDestructing(_ msgId: NSNumber) -> Bool {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 927 |         return selfDestructingMessageIds.contains(msgId.int32Value)
+ 928 |     }
+Sources/tgapi/TLParser.swift:933:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 931 |     private static var autoDeleteMessageIds = Set<Int32>()
+ 932 | 
+ 933 |     @objc static func isMessageAutoDelete(_ msgId: NSNumber) -> Bool {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 934 |         return autoDeleteMessageIds.contains(msgId.int32Value)
+ 935 |     }
+Sources/tgapi/TLParser.swift:1314:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1312 |     }
+1313 | 
+1314 |     @objc static func stripAntiSelfDestruct(_ data: NSData) -> NSData? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1315 |         let isAntiSelfDestruct = isAntiSelfDestructActive
+1316 |         let isNoForwardsBypass = isNoForwardsBypassActive
+Sources/tgapi/TLParser.swift:1581:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1579 |     }
+1580 | 
+1581 |     @objc static func handleResponse(_ data: NSData, functionID: NSNumber) -> NSData? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1582 |         // Returns patched data only if something was actually modified.
+1583 |         // Returning nil means "no change" — caller uses original data as-is.
+Sources/tgapi/TLParser.swift:1641:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1639 |     }
+1640 | 
+1641 |     @objc(handleForwardRequest:)
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1642 |     static func handleForwardRequest(_ data: NSData) -> Bool {
+1643 |         NSLog("[Lead] handleForwardRequest called")
+Sources/tgapi/TLParser.swift:1662:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1660 |     }
+1661 | 
+1662 |     @objc(createGetMessagesRequest:)
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1663 |     static func createGetMessagesRequest(fromForward data: NSData) -> NSData? {
+1664 |         guard let request = parseForwardRequest(data) else { return nil }
+Sources/tgapi/TLParser.swift:1678:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1676 |     }
+1677 | 
+1678 |     @objc(createSendMediaRequests:originalForwardData:)
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1679 |     static func createSendMediaRequests(_ response: Any, originalForwardData: NSData) -> [NSData] {
+1680 |         guard let messagesResponse = response as? Api.messages.Messages else { 
+Sources/tgapi/TLParser.swift:1786:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1784 |     }
+1785 | 
+1786 |     @objc(parseMessagesResponse:)
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1787 |     static func parseMessagesResponse(_ data: NSData) -> Any? {
+1788 |         var workingData = data as Data
+Sources/tgapi/TLParser.swift:1811:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1809 |     }
+1810 | 
+1811 |     @objc static func fakeUpdatesResponse() -> NSData {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1812 |         let outBuf = Buffer()
+1813 |         let updates = Api.Updates.updates(Api.Updates.Cons_updates(updates: [], users: [], chats: [], date: Int32(Date().timeIntervalSince1970), seq: 0))
+Sources/tgapi/TLParser.swift:1879:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1877 |     }
+1878 | 
+1879 |     @objc static func isVideoFile(atPath path: String) -> Bool {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1880 |         guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+1881 |         defer { handle.closeFile() }
+Sources/tgapi/TLParser.swift:1900:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1898 |     }
+1899 | 
+1900 |     @objc static func findVideoFilePath(fromTarget target: Any?) -> String? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1901 |         return findMediaFilePath(fromTarget: target, isVideoOnly: true)
+1902 |     }
+Sources/tgapi/TLParser.swift:1904:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1902 |     }
+1903 | 
+1904 |     @objc static func findMediaFilePath(fromTarget target: Any?) -> String? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1905 |         return findMediaFilePath(fromTarget: target, isVideoOnly: false)
+1906 |     }
+make[4]: *** [/Users/runner/work/lastproject/lastproject/theos/makefiles/instance/rules.mk:378: internal-swift-Tweak-arm64] Error 1
+make[3]: *** [/Users/runner/work/lastproject/lastproject/theos/makefiles/instance/rules.mk:387: /Users/runner/work/lastproject/lastproject/.theos/obj/arm64/.swift-stamp] Error 2
+make[2]: *** [/Users/runner/work/lastproject/lastproject/theos/makefiles/instance/library.mk:52: /Users/runner/work/lastproject/lastproject/.theos/obj/arm64/Tweak.dylib] Error 2
+make[2]: *** Waiting for unfinished jobs....
+Sources/tgapi/TLParser.swift:476:18: error: static methods may only be declared on a type
+error: emit-module command failed with exit code 1 (use -v to see invocation)
+ 474 |     }
+rm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64e/Sources/tgapi/FilePickerFix.xm.mm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64e/Sources/tgapi/Hooks.xm.mm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64e/Sources/tgapi/LocationHook.xm.mm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64e/Sources/tgapi/UI/UIHooks.xm.mm /Users/runner/work/lastproject/lastproject/.theos/obj/arm64e/Sources/tgapi/SideloadFix.xm.mm
+ 475 | 
+ 476 |     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
+     |                  `- error: static methods may only be declared on a type
+ 477 |         var editDate: Int32?
+ 478 |         var origDate: Int32?
+Sources/tgapi/TLParser.swift:619:18: error: static methods may only be declared on a type
+ 617 |     }
+ 618 | 
+ 619 |     @objc static func getOriginalTextForId(_ msgId: NSNumber) -> NSString? {
+     |                  `- error: static methods may only be declared on a type
+ 620 |         let id = msgId.int32Value
+ 621 |         if let text = editedTextsQueue.sync(execute: { () -> String? in
+Sources/tgapi/TLParser.swift:638:18: error: static methods may only be declared on a type
+ 636 |     /// Dynamically extracts message.id.id from a ChatMessageItem using Mirror reflection first,
+ 637 |     /// then precompiled regex fallback if needed.
+ 638 |     @objc static func getMessageId(from item: Any) -> NSNumber? {
+     |                  `- error: static methods may only be declared on a type
+ 639 |         let unwrapped = unwrapOptional(item)
+ 640 |         
+Sources/tgapi/TLParser.swift:697:20: error: static methods may only be declared on a type
+ 695 |     }
+ 696 | 
+ 697 |     private static func extractId(fromMessage msg: Any) -> NSNumber? {
+     |                    `- error: static methods may only be declared on a type
+ 698 |         let unwrapped = unwrapOptional(msg)
+ 699 |         let msgMirror = Mirror(reflecting: unwrapped)
+Sources/tgapi/TLParser.swift:714:18: error: static methods may only be declared on a type
+ 712 | 
+ 713 |     /// Dynamically extracts message ID from a ChatMessageBubbleItemNode
+ 714 |     @objc static func getMessageIdFromNode(_ node: Any) -> NSNumber? {
+     |                  `- error: static methods may only be declared on a type
+ 715 |         var currentMirror: Mirror? = Mirror(reflecting: node)
+ 716 |         while let mirror = currentMirror {
+Sources/tgapi/TLParser.swift:757:18: error: static methods may only be declared on a type
+ 755 |     }
+ 756 | 
+ 757 |     @objc static func getDebugDumpFromNode(_ node: Any) -> NSString {
+     |                  `- error: static methods may only be declared on a type
+ 758 |         var currentMirror: Mirror? = Mirror(reflecting: node)
+ 759 |         while let mirror = currentMirror {
+Sources/tgapi/TLParser.swift:773:18: error: static methods may only be declared on a type
+ 771 |     }
+ 772 | 
+ 773 |     @objc static func getPeerIdFromNode(_ node: Any) -> NSNumber? {
+     |                  `- error: static methods may only be declared on a type
+ 774 |         // Try to sniff sharedContext from any node that might have it
+ 775 |         if sharedContext == nil, let obj = node as? NSObject {
+Sources/tgapi/TLParser.swift:818:20: error: static methods may only be declared on a type
+ 816 |     }
+ 817 | 
+ 818 |     private static func extractId(fromPeer peer: Any) -> NSNumber? {
+     |                    `- error: static methods may only be declared on a type
+ 819 |         let desc = String(describing: peer)
+ 820 |         if let range = desc.range(of: "(id|userId|channelId):\\s*(-?\\d+)", options: .regularExpression) {
+Sources/tgapi/TLParser.swift:843:20: error: static methods may only be declared on a type
+ 841 |     }
+ 842 | 
+ 843 |     private static func extractId(fromPeerId pid: Any) -> NSNumber? {
+     |                    `- error: static methods may only be declared on a type
+ 844 |         if let idVal = pid as? Int64 { return NSNumber(value: idVal) }
+ 845 |         if let idVal = pid as? Int32 { return NSNumber(value: Int64(idVal)) }
+Sources/tgapi/TLParser.swift:864:18: error: static methods may only be declared on a type
+ 862 |     }
+ 863 | 
+ 864 |     @objc static func getCurrentUserId() -> NSNumber? {
+     |                  `- error: static methods may only be declared on a type
+ 865 |         if let context = sharedContext {
+ 866 |             let mirror = Mirror(reflecting: context)
+Sources/tgapi/TLParser.swift:883:18: error: static methods may only be declared on a type
+ 881 |     }
+ 882 | 
+ 883 |     @objc static func isDeleted(_ msgId: NSNumber) -> Bool {
+     |                  `- error: static methods may only be declared on a type
+ 884 |         return deletedIds.contains(msgId.int32Value)
+ 885 |     }
+Sources/tgapi/TLParser.swift:888:20: error: static methods may only be declared on a type
+ 886 | 
+ 887 |     // Deleted indicator is now rendered as a visual DEL pill badge on the cell.
+ 888 |     private static func applyDeletedIndicator(to msgs: [Api.Message]) -> (messages: [Api.Message], changed: Bool) {
+     |                    `- error: static methods may only be declared on a type
+ 889 |         return (msgs, false)
+ 890 |     }
+Sources/tgapi/TLParser.swift:892:20: error: static properties may only be declared on a type
+ 890 |     }
+ 891 |     // IDs of messages that originally had a self-destruct timer (one-time media ttlSeconds)
+ 892 |     private static let selfDestructUdKey = "LeadSelfDestructingIds"
+     |                    `- error: static properties may only be declared on a type
+ 893 |     private static var _selfDestructingMessageIds = Set<Int32>()
+ 894 |     private static var _selfDestructLoaded = false
+Sources/tgapi/TLParser.swift:893:20: error: static properties may only be declared on a type
+ 891 |     // IDs of messages that originally had a self-destruct timer (one-time media ttlSeconds)
+ 892 |     private static let selfDestructUdKey = "LeadSelfDestructingIds"
+ 893 |     private static var _selfDestructingMessageIds = Set<Int32>()
+     |                    `- error: static properties may only be declared on a type
+ 894 |     private static var _selfDestructLoaded = false
+ 895 |     private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+Sources/tgapi/TLParser.swift:894:20: error: static properties may only be declared on a type
+ 892 |     private static let selfDestructUdKey = "LeadSelfDestructingIds"
+ 893 |     private static var _selfDestructingMessageIds = Set<Int32>()
+ 894 |     private static var _selfDestructLoaded = false
+     |                    `- error: static properties may only be declared on a type
+ 895 |     private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+ 896 | 
+Sources/tgapi/TLParser.swift:895:20: error: static properties may only be declared on a type
+ 893 |     private static var _selfDestructingMessageIds = Set<Int32>()
+ 894 |     private static var _selfDestructLoaded = false
+ 895 |     private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+     |                    `- error: static properties may only be declared on a type
+ 896 | 
+ 897 |     private static var selfDestructingMessageIds: Set<Int32> {
+Sources/tgapi/TLParser.swift:897:20: error: static properties may only be declared on a type
+ 895 |     private static let selfDestructQueue = DispatchQueue(label: "com.lead.selfDestructIds", attributes: .concurrent)
+ 896 | 
+ 897 |     private static var selfDestructingMessageIds: Set<Int32> {
+     |                    `- error: static properties may only be declared on a type
+ 898 |         return selfDestructQueue.sync {
+ 899 |             if !_selfDestructLoaded {
+Sources/tgapi/TLParser.swift:908:20: error: static methods may only be declared on a type
+ 906 |     }
+ 907 | 
+ 908 |     private static func addSelfDestructingId(_ id: Int32) {
+     |                    `- error: static methods may only be declared on a type
+ 909 |         guard id != 0 else { return }
+ 910 |         selfDestructQueue.async(flags: .barrier) {
+Sources/tgapi/TLParser.swift:926:18: error: static methods may only be declared on a type
+ 924 |     }
+ 925 | 
+ 926 |     @objc static func isMessageSelfDestructing(_ msgId: NSNumber) -> Bool {
+     |                  `- error: static methods may only be declared on a type
+ 927 |         return selfDestructingMessageIds.contains(msgId.int32Value)
+ 928 |     }
+Sources/tgapi/TLParser.swift:931:20: error: static properties may only be declared on a type
+ 929 | 
+ 930 |     // IDs of messages in chats with auto-delete (ttlPeriod)
+ 931 |     private static var autoDeleteMessageIds = Set<Int32>()
+     |                    `- error: static properties may only be declared on a type
+ 932 | 
+ 933 |     @objc static func isMessageAutoDelete(_ msgId: NSNumber) -> Bool {
+Sources/tgapi/TLParser.swift:933:18: error: static methods may only be declared on a type
+ 931 |     private static var autoDeleteMessageIds = Set<Int32>()
+ 932 | 
+ 933 |     @objc static func isMessageAutoDelete(_ msgId: NSNumber) -> Bool {
+     |                  `- error: static methods may only be declared on a type
+ 934 |         return autoDeleteMessageIds.contains(msgId.int32Value)
+ 935 |     }
+Sources/tgapi/TLParser.swift:937:20: error: static properties may only be declared on a type
+ 935 |     }
+ 936 | 
+ 937 |     private static var isNoForwardsBypassActive: Bool {
+     |                    `- error: static properties may only be declared on a type
+ 938 |         if UserDefaults.standard.object(forKey: "disableForwardRestriction") == nil {
+ 939 |             return true
+Sources/tgapi/TLParser.swift:944:20: error: static properties may only be declared on a type
+ 942 |     }
+ 943 | 
+ 944 |     private static var isAntiSelfDestructActive: Bool {
+     |                    `- error: static properties may only be declared on a type
+ 945 |         if UserDefaults.standard.object(forKey: "LeadAntiSelfDestruct") == nil {
+ 946 |             return true
+Sources/tgapi/TLParser.swift:951:20: error: static properties may only be declared on a type
+ 949 |     }
+ 950 | 
+ 951 |     private static var isAntiRevokeActive: Bool {
+     |                    `- error: static properties may only be declared on a type
+ 952 |         if UserDefaults.standard.object(forKey: "LeadAntiRevoke") == nil {
+ 953 |             return true
+Sources/tgapi/TLParser.swift:958:20: error: static methods may only be declared on a type
+ 956 |     }
+ 957 | 
+ 958 |     private static func stripTTLMedia(_ media: Api.MessageMedia, messageId: Int32) -> (Api.MessageMedia, Bool) {
+     |                    `- error: static methods may only be declared on a type
+ 959 |         guard isAntiSelfDestructActive else { return (media, false) }
+ 960 |         switch media {
+Sources/tgapi/TLParser.swift:982:20: error: static methods may only be declared on a type
+ 980 |     }
+ 981 | 
+ 982 |     private static func stripNoForwards(_ chat: Api.Chat) -> (Api.Chat, Bool) {
+     |                    `- error: static methods may only be declared on a type
+ 983 |         guard isNoForwardsBypassActive ||
+ 984 |               isAntiSelfDestructActive ||
+Sources/tgapi/TLParser.swift:1032:20: error: static methods may only be declared on a type
+1030 |     }
+1031 | 
+1032 |     private static func stripNoForwardsFromChats(_ chats: [Api.Chat]) -> ([Api.Chat], Bool) {
+     |                    `- error: static methods may only be declared on a type
+1033 |         var modified = false
+1034 |         let newChats = chats.map { chat -> Api.Chat in
+Sources/tgapi/TLParser.swift:1044:20: error: static methods may only be declared on a type
+1042 |     }
+1043 |     
+1044 |     private static func stripNoForwardsFromFullChat(_ chatFull: Api.ChatFull) -> (Api.ChatFull, Bool) {
+     |                    `- error: static methods may only be declared on a type
+1045 |         guard isNoForwardsBypassActive ||
+1046 |               isAntiSelfDestructActive ||
+Sources/tgapi/TLParser.swift:1098:20: error: static methods may only be declared on a type
+1096 |     }
+1097 | 
+1098 |     private static func shiftEntities(_ entities: [Api.MessageEntity]?, by offset: Int32) -> [Api.MessageEntity] {
+     |                    `- error: static methods may only be declared on a type
+1099 |         guard let entities = entities else { return [] }
+1100 |         return entities.map { entity in
+Sources/tgapi/TLParser.swift:1127:20: error: static methods may only be declared on a type
+1125 |     }
+1126 | 
+1127 |     private static func applyTTLIndicator(message: String, entities: [Api.MessageEntity]?, shouldApply: Bool) -> (String, [Api.MessageEntity]?) {
+     |                    `- error: static methods may only be declared on a type
+1128 |         var newMessageText = message
+1129 |         var newEntities = entities ?? []
+Sources/tgapi/TLParser.swift:1153:20: error: static methods may only be declared on a type
+1151 |     }
+1152 | 
+1153 |     private static func stripTTLMessage(_ apiMsg: Api.Message) -> (Api.Message, Bool) {
+     |                    `- error: static methods may only be declared on a type
+1154 |         guard case let .message(data) = apiMsg else {
+1155 |             return (apiMsg, false)
+Sources/tgapi/TLParser.swift:1233:20: error: static methods may only be declared on a type
+1231 |     }
+1232 | 
+1233 |     private static func stripTTLUpdates(_ updates: [Api.Update]) -> ([Api.Update], Bool) {
+     |                    `- error: static methods may only be declared on a type
+1234 |         var modified = false
+1235 |         let result = updates.map { update -> Api.Update in
+Sources/tgapi/TLParser.swift:1245:20: error: static methods may only be declared on a type
+1243 |     }
+1244 | 
+1245 |     private static func stripTTLUpdate(_ update: Api.Update) -> (Api.Update, Bool) {
+     |                    `- error: static methods may only be declared on a type
+1246 |         switch update {
+1247 |         case let .updateNewMessage(data):
+Sources/tgapi/TLParser.swift:1314:18: error: static methods may only be declared on a type
+1312 |     }
+1313 | 
+1314 |     @objc static func stripAntiSelfDestruct(_ data: NSData) -> NSData? {
+     |                  `- error: static methods may only be declared on a type
+1315 |         let isAntiSelfDestruct = isAntiSelfDestructActive
+1316 |         let isNoForwardsBypass = isNoForwardsBypassActive
+Sources/tgapi/TLParser.swift:1581:18: error: static methods may only be declared on a type
+1579 |     }
+1580 | 
+1581 |     @objc static func handleResponse(_ data: NSData, functionID: NSNumber) -> NSData? {
+     |                  `- error: static methods may only be declared on a type
+1582 |         // Returns patched data only if something was actually modified.
+1583 |         // Returning nil means "no change" — caller uses original data as-is.
+Sources/tgapi/TLParser.swift:1594:20: error: static methods may only be declared on a type
+1592 |     }
+1593 | 
+1594 |     private static func parseForwardRequest(_ data: NSData) -> ForwardRequest? {
+     |                    `- error: static methods may only be declared on a type
+1595 |         let buffer = Buffer(data: data as Data)
+1596 |         let reader = BufferReader(buffer)
+Sources/tgapi/TLParser.swift:1642:12: error: static methods may only be declared on a type
+1640 | 
+1641 |     @objc(handleForwardRequest:)
+1642 |     static func handleForwardRequest(_ data: NSData) -> Bool {
+     |            `- error: static methods may only be declared on a type
+1643 |         NSLog("[Lead] handleForwardRequest called")
+1644 |         guard let request = parseForwardRequest(data) else { 
+Sources/tgapi/TLParser.swift:1663:12: error: static methods may only be declared on a type
+1661 | 
+1662 |     @objc(createGetMessagesRequest:)
+1663 |     static func createGetMessagesRequest(fromForward data: NSData) -> NSData? {
+     |            `- error: static methods may only be declared on a type
+1664 |         guard let request = parseForwardRequest(data) else { return nil }
+1665 |         
+Sources/tgapi/TLParser.swift:1679:12: error: static methods may only be declared on a type
+1677 | 
+1678 |     @objc(createSendMediaRequests:originalForwardData:)
+1679 |     static func createSendMediaRequests(_ response: Any, originalForwardData: NSData) -> [NSData] {
+     |            `- error: static methods may only be declared on a type
+1680 |         guard let messagesResponse = response as? Api.messages.Messages else { 
+1681 |             NSLog("[Lead] Failed to cast response to Api.messages.Messages")
+Sources/tgapi/TLParser.swift:1787:12: error: static methods may only be declared on a type
+1785 | 
+1786 |     @objc(parseMessagesResponse:)
+1787 |     static func parseMessagesResponse(_ data: NSData) -> Any? {
+     |            `- error: static methods may only be declared on a type
+1788 |         var workingData = data as Data
+1789 |         if workingData.count >= 4 {
+Sources/tgapi/TLParser.swift:1811:18: error: static methods may only be declared on a type
+1809 |     }
+1810 | 
+1811 |     @objc static func fakeUpdatesResponse() -> NSData {
+     |                  `- error: static methods may only be declared on a type
+1812 |         let outBuf = Buffer()
+1813 |         let updates = Api.Updates.updates(Api.Updates.Cons_updates(updates: [], users: [], chats: [], date: Int32(Date().timeIntervalSince1970), seq: 0))
+Sources/tgapi/TLParser.swift:1818:12: error: static methods may only be declared on a type
+1816 |     }
+1817 | 
+1818 |     static func serializeBoxed(_ obj: Any) -> NSData {
+     |            `- error: static methods may only be declared on a type
+1819 |         let outBuf = Buffer()
+1820 |         Api.serializeObject(obj, buffer: outBuf, boxed: true)
+Sources/tgapi/TLParser.swift:1826:20: error: static methods may only be declared on a type
+1824 |     // MARK: - Targeted Media File Resolver
+1825 | 
+1826 |     private static func safeGetProperty(_ obj: AnyObject, _ key: String) -> Any? {
+     |                    `- error: static methods may only be declared on a type
+1827 |         let sel = NSSelectorFromString(key)
+1828 |         if obj.responds(to: sel) {
+Sources/tgapi/TLParser.swift:1842:20: error: static methods may only be declared on a type
+1840 |     }
+1841 | 
+1842 |     private static func findCentralItemNode(from vc: UIViewController) -> AnyObject? {
+     |                    `- error: static methods may only be declared on a type
+1843 |         guard vc.isViewLoaded, let rootView = vc.view else { return nil }
+1844 | 
+Sources/tgapi/TLParser.swift:1879:18: error: static methods may only be declared on a type
+1877 |     }
+1878 | 
+1879 |     @objc static func isVideoFile(atPath path: String) -> Bool {
+     |                  `- error: static methods may only be declared on a type
+1880 |         guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+1881 |         defer { handle.closeFile() }
+Sources/tgapi/TLParser.swift:1900:18: error: static methods may only be declared on a type
+1898 |     }
+1899 | 
+1900 |     @objc static func findVideoFilePath(fromTarget target: Any?) -> String? {
+     |                  `- error: static methods may only be declared on a type
+1901 |         return findMediaFilePath(fromTarget: target, isVideoOnly: true)
+1902 |     }
+Sources/tgapi/TLParser.swift:1904:18: error: static methods may only be declared on a type
+1902 |     }
+1903 | 
+1904 |     @objc static func findMediaFilePath(fromTarget target: Any?) -> String? {
+     |                  `- error: static methods may only be declared on a type
+1905 |         return findMediaFilePath(fromTarget: target, isVideoOnly: false)
+1906 |     }
+Sources/tgapi/TLParser.swift:1908:20: error: static methods may only be declared on a type
+1906 |     }
+1907 | 
+1908 |     private static func findMediaFilePath(fromTarget target: Any?, isVideoOnly: Bool) -> String? {
+     |                    `- error: static methods may only be declared on a type
+1909 |         guard let target = target else {
+1910 |             customLogMsg("[TLParser] findMediaFilePath: target is nil")
+Sources/tgapi/TLParser.swift:2099:20: error: static methods may only be declared on a type
+2097 |     }
+2098 | 
+2099 |     private static func collectNodesAndViews(from view: UIView, into list: inout [Any]) {
+     |                    `- error: static methods may only be declared on a type
+2100 |         if let node = safeGetProperty(view, "asyncdisplaykit_node") {
+2101 |             list.append(node)
+Sources/tgapi/TLParser.swift:2109:20: error: static methods may only be declared on a type
+2107 |     }
+2108 | 
+2109 |     private static func extractMediaInfo(from obj: Any, visited: inout Set<ObjectIdentifier>, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String], isVideoSearch: Bool = false, depth: Int = 0) {
+     |                    `- error: static methods may only be declared on a type
+2110 |         if depth > 6 { return }
+2111 | 
+Sources/tgapi/TLParser.swift:2208:20: error: static methods may only be declared on a type
+2206 |     }
+2207 | 
+2208 |     private static func parseIdentifiers(fromText text: String, fileIds: inout [Int64], uniqueIds: inout [String], tempPaths: inout [String], isVideoSearch: Bool = false) {
+     |                    `- error: static methods may only be declared on a type
+2209 |         if text.isEmpty { return }
+2210 | 
+Sources/tgapi/TLParser.swift:2276:20: error: static methods may only be declared on a type
+2274 |     }
+2275 | 
+2276 |     private static func collectMediaFolders() -> [String] {
+     |                    `- error: static methods may only be declared on a type
+2277 |         var folders: [String] = []
+2278 |         let fm = FileManager.default
+Sources/tgapi/TLParser.swift:2347:1: error: extraneous '}' at top level
+2345 |         return folders
+2346 |     }
+2347 | }
+     | `- error: extraneous '}' at top level
+2348 | 
+Sources/tgapi/TLParser.swift:476:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 474 |     }
+ 475 | 
+ 476 |     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 477 |         var editDate: Int32?
+ 478 |         var origDate: Int32?
+Sources/tgapi/TLParser.swift:619:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 617 |     }
+ 618 | 
+ 619 |     @objc static func getOriginalTextForId(_ msgId: NSNumber) -> NSString? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 620 |         let id = msgId.int32Value
+ 621 |         if let text = editedTextsQueue.sync(execute: { () -> String? in
+Sources/tgapi/TLParser.swift:638:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 636 |     /// Dynamically extracts message.id.id from a ChatMessageItem using Mirror reflection first,
+ 637 |     /// then precompiled regex fallback if needed.
+ 638 |     @objc static func getMessageId(from item: Any) -> NSNumber? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 639 |         let unwrapped = unwrapOptional(item)
+ 640 |         
+Sources/tgapi/TLParser.swift:714:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 712 | 
+ 713 |     /// Dynamically extracts message ID from a ChatMessageBubbleItemNode
+ 714 |     @objc static func getMessageIdFromNode(_ node: Any) -> NSNumber? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 715 |         var currentMirror: Mirror? = Mirror(reflecting: node)
+ 716 |         while let mirror = currentMirror {
+Sources/tgapi/TLParser.swift:757:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 755 |     }
+ 756 | 
+ 757 |     @objc static func getDebugDumpFromNode(_ node: Any) -> NSString {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 758 |         var currentMirror: Mirror? = Mirror(reflecting: node)
+ 759 |         while let mirror = currentMirror {
+Sources/tgapi/TLParser.swift:773:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 771 |     }
+ 772 | 
+ 773 |     @objc static func getPeerIdFromNode(_ node: Any) -> NSNumber? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 774 |         // Try to sniff sharedContext from any node that might have it
+ 775 |         if sharedContext == nil, let obj = node as? NSObject {
+Sources/tgapi/TLParser.swift:864:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 862 |     }
+ 863 | 
+ 864 |     @objc static func getCurrentUserId() -> NSNumber? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 865 |         if let context = sharedContext {
+ 866 |             let mirror = Mirror(reflecting: context)
+Sources/tgapi/TLParser.swift:883:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 881 |     }
+ 882 | 
+ 883 |     @objc static func isDeleted(_ msgId: NSNumber) -> Bool {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 884 |         return deletedIds.contains(msgId.int32Value)
+ 885 |     }
+Sources/tgapi/TLParser.swift:926:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 924 |     }
+ 925 | 
+ 926 |     @objc static func isMessageSelfDestructing(_ msgId: NSNumber) -> Bool {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 927 |         return selfDestructingMessageIds.contains(msgId.int32Value)
+ 928 |     }
+Sources/tgapi/TLParser.swift:933:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 931 |     private static var autoDeleteMessageIds = Set<Int32>()
+ 932 | 
+ 933 |     @objc static func isMessageAutoDelete(_ msgId: NSNumber) -> Bool {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+ 934 |         return autoDeleteMessageIds.contains(msgId.int32Value)
+ 935 |     }
+Sources/tgapi/TLParser.swift:1314:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1312 |     }
+1313 | 
+1314 |     @objc static func stripAntiSelfDestruct(_ data: NSData) -> NSData? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1315 |         let isAntiSelfDestruct = isAntiSelfDestructActive
+1316 |         let isNoForwardsBypass = isNoForwardsBypassActive
+Sources/tgapi/TLParser.swift:1581:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1579 |     }
+1580 | 
+1581 |     @objc static func handleResponse(_ data: NSData, functionID: NSNumber) -> NSData? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1582 |         // Returns patched data only if something was actually modified.
+1583 |         // Returning nil means "no change" — caller uses original data as-is.
+Sources/tgapi/TLParser.swift:1641:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1639 |     }
+1640 | 
+1641 |     @objc(handleForwardRequest:)
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1642 |     static func handleForwardRequest(_ data: NSData) -> Bool {
+1643 |         NSLog("[Lead] handleForwardRequest called")
+Sources/tgapi/TLParser.swift:1662:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1660 |     }
+1661 | 
+1662 |     @objc(createGetMessagesRequest:)
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1663 |     static func createGetMessagesRequest(fromForward data: NSData) -> NSData? {
+1664 |         guard let request = parseForwardRequest(data) else { return nil }
+Sources/tgapi/TLParser.swift:1678:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1676 |     }
+1677 | 
+1678 |     @objc(createSendMediaRequests:originalForwardData:)
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1679 |     static func createSendMediaRequests(_ response: Any, originalForwardData: NSData) -> [NSData] {
+1680 |         guard let messagesResponse = response as? Api.messages.Messages else { 
+Sources/tgapi/TLParser.swift:1786:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1784 |     }
+1785 | 
+1786 |     @objc(parseMessagesResponse:)
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1787 |     static func parseMessagesResponse(_ data: NSData) -> Any? {
+1788 |         var workingData = data as Data
+Sources/tgapi/TLParser.swift:1811:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1809 |     }
+1810 | 
+1811 |     @objc static func fakeUpdatesResponse() -> NSData {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1812 |         let outBuf = Buffer()
+1813 |         let updates = Api.Updates.updates(Api.Updates.Cons_updates(updates: [], users: [], chats: [], date: Int32(Date().timeIntervalSince1970), seq: 0))
+Sources/tgapi/TLParser.swift:1879:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1877 |     }
+1878 | 
+1879 |     @objc static func isVideoFile(atPath path: String) -> Bool {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1880 |         guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+1881 |         defer { handle.closeFile() }
+Sources/tgapi/TLParser.swift:1900:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1898 |     }
+1899 | 
+1900 |     @objc static func findVideoFilePath(fromTarget target: Any?) -> String? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1901 |         return findMediaFilePath(fromTarget: target, isVideoOnly: true)
+1902 |     }
+Sources/tgapi/TLParser.swift:1904:6: error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1902 |     }
+1903 | 
+1904 |     @objc static func findMediaFilePath(fromTarget target: Any?) -> String? {
+     |      `- error: '@objc' can only be used with members of classes, '@objc' protocols, and concrete extensions of classes
+1905 |         return findMediaFilePath(fromTarget: target, isVideoOnly: false)
+1906 |     }
+make[4]: *** [/Users/runner/work/lastproject/lastproject/theos/makefiles/instance/rules.mk:378: internal-swift-Tweak-arm64e] Error 1
+make[3]: *** [/Users/runner/work/lastproject/lastproject/theos/makefiles/instance/rules.mk:387: /Users/runner/work/lastproject/lastproject/.theos/obj/arm64e/.swift-stamp] Error 2
+make[2]: *** [/Users/runner/work/lastproject/lastproject/theos/makefiles/instance/library.mk:52: /Users/runner/work/lastproject/lastproject/.theos/obj/arm64e/Tweak.dylib] Error 2
+make[1]: *** [/Users/runner/work/lastproject/lastproject/theos/makefiles/instance/library.mk:37: internal-library-all_] Error 2
+make: *** [/Users/runner/work/lastproject/lastproject/theos/makefiles/master/rules.mk:146: Tweak.all.tweak.variables] Error 2
+Error: Process completed with exit code 2.

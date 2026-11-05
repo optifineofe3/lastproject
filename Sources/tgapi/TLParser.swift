@@ -471,7 +471,6 @@ class TLParser: NSObject {
         }
         return false
     }
-    }
 
     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
         var editDate: Int32?
