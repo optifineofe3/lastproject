@@ -6,130 +6,244 @@ import tgapiC
 class TLParser: NSObject {
     @objc static var sharedContext: Any?
 
-    // Thread-safe set of message IDs saved from deletion.
-    private static let deletedQueue = DispatchQueue(label: "com.lead.deletedIds",
-                                                    attributes: .concurrent)
-    private static var _deletedIds = Set<Int32>()
-    private static let udKey = "LeadDeletedMsgIds"
-    private static var _loaded = false
+    // Thread-safe scoped keys for deleted and edited messages.
+    // Keys are formatted as "\(channelId)_\(msgId)" for channel messages or "\(msgId)" for direct/group chats.
+    private static let deletedQueue = DispatchQueue(label: "com.lead.deletedIds", attributes: .concurrent)
+    private static var _deletedKeys = Set<String>()
+
+    private static let origTextsQueue = DispatchQueue(label: "com.lead.origTexts", attributes: .concurrent)
+    private static var _originalTexts = [String: String]()
+
+    private static let editedTextsQueue = DispatchQueue(label: "com.lead.editedTexts", attributes: .concurrent)
+    private static var _editedOriginalTexts = [String: String]()
+    private static var _editedKeys = Set<String>()
+    private static var _editChains = [String: [[String: Any]]]()
+
+    private static var _databaseLoaded = false
+    private static let dbVersionKey = "TweakDBVersion_v2"
     private static var protectedChannelIds = Set<Int64>()
 
-    // Precompiled regular expressions for high-performance parsing without regex recompilation overhead
-    private static let messageIdRegex = try? NSRegularExpression(pattern: "MessageId\\(peerId: [^,]+, namespace: [^,]+, id: (\\d+)\\)", options: [])
-    private static let rawValueRegex = try? NSRegularExpression(pattern: "rawValue: \\d+\\):\\d+_(\\d+)", options: [])
-    private static let fallbackRegex = try? NSRegularExpression(pattern: "messageId: (\\d+)", options: [])
-    private static let dumpPatternRegex = try? NSRegularExpression(pattern: "MessageId.*?id: (\\d+)", options: [.dotMatchesLineSeparators])
-    private static let dumpRawValueRegex = try? NSRegularExpression(pattern: "rawValue: \\d+\\):\\d+_(\\d+)", options: [])
+    // Dedicated database storage directory: Library/Application Support/Tweak
+    private static var dbDirectoryURL: URL {
+        let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        let appSupport = urls.first ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let tweakDir = appSupport.appendingPathComponent("Tweak", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: tweakDir.path) {
+            try? FileManager.default.createDirectory(at: tweakDir, withIntermediateDirectories: true, attributes: nil)
+        }
+        return tweakDir
+    }
+
+    private static func makeKey(msgId: Int32, peerId: Int64) -> String {
+        if peerId != 0 {
+            return "\(peerId)_\(msgId)"
+        }
+        return "\(msgId)"
+    }
+
+    private static func loadDatabaseIfNeeded() {
+        guard !_databaseLoaded else { return }
+        _databaseLoaded = true
+
+        // Clean slate: reset corrupt old database from previous versions
+        let currentVersion = UserDefaults.standard.integer(forKey: dbVersionKey)
+        if currentVersion < 2 {
+            UserDefaults.standard.removeObject(forKey: "LeadDeletedMsgIds")
+            UserDefaults.standard.removeObject(forKey: "LeadEditedMsgIds")
+            UserDefaults.standard.removeObject(forKey: "LeadEditedOriginalTexts")
+            UserDefaults.standard.removeObject(forKey: "LeadOriginalMessageTexts")
+            UserDefaults.standard.removeObject(forKey: "TweakMessageEditChains")
+            UserDefaults.standard.set(2, forKey: dbVersionKey)
+            UserDefaults.standard.synchronize()
+
+            let dir = dbDirectoryURL
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent("deleted_v2.json"))
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent("edited_v2.json"))
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent("chains_v2.json"))
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent("orig_v2.json"))
+
+            _deletedKeys.removeAll()
+            _editedOriginalTexts.removeAll()
+            _editedKeys.removeAll()
+            _originalTexts.removeAll()
+            _editChains.removeAll()
+            return
+        }
+
+        let dir = dbDirectoryURL
+        let delURL = dir.appendingPathComponent("deleted_v2.json")
+        if let data = try? Data(contentsOf: delURL),
+           let arr = try? JSONSerialization.jsonObject(with: data, options: []) as? [String] {
+            _deletedKeys = Set(arr)
+        }
+
+        let editURL = dir.appendingPathComponent("edited_v2.json")
+        if let data = try? Data(contentsOf: editURL),
+           let dict = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: String] {
+            _editedOriginalTexts = dict
+            _editedKeys = Set(dict.keys)
+        }
+
+        let origURL = dir.appendingPathComponent("orig_v2.json")
+        if let data = try? Data(contentsOf: origURL),
+           let dict = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: String] {
+            _originalTexts = dict
+        }
+
+        let chainsURL = dir.appendingPathComponent("chains_v2.json")
+        if let data = try? Data(contentsOf: chainsURL),
+           let dict = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: [[String: Any]]] {
+            _editChains = dict
+        }
+    }
+
+    private static var saveTimer: DispatchSourceTimer?
+    private static let saveQueue = DispatchQueue(label: "com.lead.dbSaveQueue", qos: .utility)
+
+    private static func saveDatabaseDebounced() {
+        saveQueue.async {
+            if saveTimer == nil {
+                let timer = DispatchSource.makeTimerSource(queue: saveQueue)
+                timer.schedule(deadline: .now() + 1.0)
+                timer.setEventHandler {
+                    saveDatabaseNow()
+                    saveTimer?.cancel()
+                    saveTimer = nil
+                }
+                saveTimer = timer
+                timer.resume()
+            }
+        }
+    }
+
+    private static func saveDatabaseNow() {
+        let dir = dbDirectoryURL
+
+        let delList: [String] = deletedQueue.sync {
+            Array(_deletedKeys.prefix(2000))
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: delList, options: []) {
+            try? data.write(to: dir.appendingPathComponent("deleted_v2.json"), options: .atomic)
+        }
+
+        let editDict: [String: String] = editedTextsQueue.sync {
+            _editedOriginalTexts
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: editDict, options: []) {
+            try? data.write(to: dir.appendingPathComponent("edited_v2.json"), options: .atomic)
+        }
+
+        let origDict: [String: String] = origTextsQueue.sync {
+            if _originalTexts.count > 2000 {
+                let keysToRemove = Array(_originalTexts.keys.prefix(_originalTexts.count - 2000))
+                for k in keysToRemove { _originalTexts.removeValue(forKey: k) }
+            }
+            return _originalTexts
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: origDict, options: []) {
+            try? data.write(to: dir.appendingPathComponent("orig_v2.json"), options: .atomic)
+        }
+
+        let chainsDict: [String: [[String: Any]]] = editedTextsQueue.sync {
+            if _editChains.count > 1000 {
+                let keysToRemove = Array(_editChains.keys.prefix(_editChains.count - 1000))
+                for k in keysToRemove { _editChains.removeValue(forKey: k) }
+            }
+            return _editChains
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: chainsDict, options: []) {
+            try? data.write(to: dir.appendingPathComponent("chains_v2.json"), options: .atomic)
+        }
+    }
 
     /// Called from ObjC (Hooks.xm) before zeroing message IDs in anti-revoke.
     @objc static func addDeletedId(_ id: Int32) {
+        addDeletedId(id, channelId: 0)
+    }
+
+    @objc static func addDeletedId(_ id: Int32, channelId: Int64) {
         guard id != 0 else { return }
+        let key = makeKey(msgId: id, peerId: channelId)
+
         deletedQueue.async(flags: .barrier) {
-            _deletedIds.insert(id)
-            // Persist to UserDefaults for cross-session indicator support
-            var saved = (UserDefaults.standard.array(forKey: udKey) as? [Int32]) ?? []
-            if !saved.contains(id) {
-                saved.append(id)
-                // Keep only last 1000 IDs to avoid unbounded growth
-                if saved.count > 1000 { saved.removeFirst(saved.count - 1000) }
-                UserDefaults.standard.set(saved, forKey: udKey)
-            }
+            loadDatabaseIfNeeded()
+            _deletedKeys.insert(key)
+            saveDatabaseDebounced()
+
             DispatchQueue.main.async {
-                NotificationCenter.default.post(name: NSNotification.Name("LeadMessageDeletedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("LeadMessageDeletedRealtime"),
+                    object: nil,
+                    userInfo: [
+                        "ids": [NSNumber(value: id)],
+                        "channelId": NSNumber(value: channelId)
+                    ]
+                )
             }
         }
     }
 
-    private static var deletedIds: Set<Int32> {
-        deletedQueue.sync {
-            if !_loaded {
-                _loaded = true
-                let saved = (UserDefaults.standard.array(forKey: udKey) as? [Int32]) ?? []
-                _deletedIds.formUnion(saved)
+    @objc static func isDeletedWithMsgId(_ msgId: NSNumber?, peerId: NSNumber?) -> Bool {
+        guard let m = msgId?.int32Value, m != 0 else { return false }
+        let p = peerId?.int64Value ?? 0
+        let key = makeKey(msgId: m, peerId: p)
+
+        return deletedQueue.sync {
+            loadDatabaseIfNeeded()
+            if _deletedKeys.contains(key) {
+                return true
             }
-            return _deletedIds
+            if p == 0 && _deletedKeys.contains("\(m)") {
+                return true
+            }
+            return false
         }
     }
 
-    // Cache of original message texts: messageId -> text
-    private static let origTextsUdKey = "LeadOriginalMessageTexts"
-    private static var _originalTexts = [Int32: String]()
-    private static var _originalTextsLoaded = false
-    private static let origTextsQueue = DispatchQueue(label: "com.lead.origTexts", attributes: .concurrent)
+    @objc static func isDeleted(_ msgId: NSNumber) -> Bool {
+        return isDeletedWithMsgId(msgId, peerId: nil)
+    }
 
-    private static func loadOrigTextsIfNeeded() {
-        if !_originalTextsLoaded {
-            _originalTextsLoaded = true
-            if let saved = UserDefaults.standard.dictionary(forKey: origTextsUdKey) as? [String: String] {
-                for (k, v) in saved {
-                    if let intKey = Int32(k) { _originalTexts[intKey] = v }
+    @objc static func isEditedWithMsgId(_ msgId: NSNumber?, peerId: NSNumber?, currentText: NSString?) -> Bool {
+        guard let m = msgId?.int32Value, m != 0 else { return false }
+        let p = peerId?.int64Value ?? 0
+        let key = makeKey(msgId: m, peerId: p)
+
+        return editedTextsQueue.sync {
+            loadDatabaseIfNeeded()
+            if let orig = _editedOriginalTexts[key], !orig.isEmpty {
+                if let cur = currentText as String?, !cur.isEmpty {
+                    return orig != cur
                 }
+                return true
             }
-        }
-    }
-
-    // Cache of edited messages: messageId -> originalText
-    private static let editedTextsUdKey = "LeadEditedOriginalTexts"
-    private static var _editedOriginalTexts = [Int32: String]()
-    private static var _editedTextsLoaded = false
-    private static let editedTextsQueue = DispatchQueue(label: "com.lead.editedTexts", attributes: .concurrent)
-
-    private static func loadEditedTextsIfNeeded() {
-        if !_editedTextsLoaded {
-            _editedTextsLoaded = true
-            if let saved = UserDefaults.standard.dictionary(forKey: editedTextsUdKey) as? [String: String] {
-                for (k, v) in saved {
-                    if let intKey = Int32(k) { _editedOriginalTexts[intKey] = v }
+            if p != 0, let orig = _editedOriginalTexts["\(m)"], !orig.isEmpty {
+                if let cur = currentText as String?, !cur.isEmpty {
+                    return orig != cur
                 }
+                return true
             }
+            return false
         }
     }
 
-    // Set of edited message IDs
-    private static let editedIdsUdKey = "LeadEditedMsgIds"
-    private static var _editedIds = Set<Int32>()
-    private static var _editedIdsLoaded = false
-    private static let editedIdsQueue = DispatchQueue(label: "com.lead.editedIds", attributes: .concurrent)
-
-    private static func loadEditedIdsIfNeeded() {
-        if !_editedIdsLoaded {
-            _editedIdsLoaded = true
-            let saved = (UserDefaults.standard.array(forKey: editedIdsUdKey) as? [Int32]) ?? []
-            _editedIds.formUnion(saved)
-        }
+    @objc static func isEdited(_ msgId: NSNumber) -> Bool {
+        return isEditedWithMsgId(msgId, peerId: nil, currentText: nil)
     }
 
-    // Multi-edit history chain: messageId -> [["date": Int32, "text": String]]
-    private static let editChainUdKey = "TweakMessageEditChains"
-    private static var _editChains = [Int32: [[String: Any]]]()
-    private static var _editChainsLoaded = false
-
-    private static func loadEditChainsIfNeeded() {
-        if !_editChainsLoaded {
-            _editChainsLoaded = true
-            if let saved = UserDefaults.standard.dictionary(forKey: editChainUdKey) as? [String: [[String: Any]]] {
-                for (k, v) in saved {
-                    if let intKey = Int32(k) { _editChains[intKey] = v }
-                }
-            }
-        }
-    }
-
-    private static func appendEditChain(id: Int32, text: String, date: Int32?) {
-        guard id != 0, !text.isEmpty else { return }
+    private static func appendEditChain(key: String, text: String, date: Int32?) {
+        guard !key.isEmpty, !text.isEmpty else { return }
         editedTextsQueue.async(flags: .barrier) {
-            loadEditChainsIfNeeded()
-            loadEditedTextsIfNeeded()
-            var chain = _editChains[id] ?? []
-            
-            var orig: String? = _editedOriginalTexts[id]
+            loadDatabaseIfNeeded()
+            var chain = _editChains[key] ?? []
+
+            var orig: String? = _editedOriginalTexts[key]
             if orig == nil {
                 origTextsQueue.sync {
-                    loadOrigTextsIfNeeded()
-                    orig = _originalTexts[id]
+                    orig = _originalTexts[key]
                 }
             }
-            
+
             if chain.isEmpty {
                 if let o = orig, !o.isEmpty, o != text {
                     chain.append([
@@ -146,42 +260,32 @@ class TLParser: NSObject {
                     ], at: 0)
                 }
             }
-            
+
             if let last = chain.last, let lastText = last["text"] as? String, lastText == text {
-                if _editChains[id]?.count != chain.count {
-                    _editChains[id] = chain
+                if _editChains[key]?.count != chain.count {
+                    _editChains[key] = chain
                 }
                 return
             }
-            
+
             let ts = date ?? Int32(Date().timeIntervalSince1970)
             chain.append([
                 "date": ts,
                 "text": text
             ])
-            
+
             if chain.count > 25 {
                 chain.removeFirst(chain.count - 25)
             }
-            _editChains[id] = chain
-            
-            var saved = (UserDefaults.standard.dictionary(forKey: editChainUdKey) as? [String: [[String: Any]]]) ?? [:]
-            saved[String(id)] = chain
-            if saved.count > 1000 {
-                let keysToRemove = Array(saved.keys.prefix(saved.count - 1000))
-                for k in keysToRemove { saved.removeValue(forKey: k) }
-            }
-            UserDefaults.standard.set(saved, forKey: editChainUdKey)
+            _editChains[key] = chain
+            saveDatabaseDebounced()
         }
     }
 
-    /// Load persisted deleted IDs and edited messages from UserDefaults into memory (call once at startup).
+    /// Load persisted deleted IDs and edited messages into memory (call once at startup).
     @objc static func loadPersistedIds() {
         deletedQueue.async(flags: .barrier) {
-            guard !_loaded else { return }
-            _loaded = true
-            let saved = (UserDefaults.standard.array(forKey: udKey) as? [Int32]) ?? []
-            _deletedIds.formUnion(saved)
+            loadDatabaseIfNeeded()
         }
         selfDestructQueue.async(flags: .barrier) {
             guard !_selfDestructLoaded else { return }
@@ -189,113 +293,72 @@ class TLParser: NSObject {
             let saved = (UserDefaults.standard.array(forKey: selfDestructUdKey) as? [Int32]) ?? []
             _selfDestructingMessageIds.formUnion(saved)
         }
-        editedIdsQueue.async(flags: .barrier) {
-            loadEditedIdsIfNeeded()
-        }
-        editedTextsQueue.async(flags: .barrier) {
-            loadEditedTextsIfNeeded()
-            loadEditChainsIfNeeded()
-        }
-        origTextsQueue.async(flags: .barrier) {
-            loadOrigTextsIfNeeded()
-        }
     }
 
     @objc static func recordOriginalMessage(id: Int32, text: String) {
-        recordOriginalMessage(id: id, text: text, date: nil)
+        recordOriginalMessage(id: id, peerId: 0, text: text, date: nil)
     }
 
-    static func recordOriginalMessage(id: Int32, text: String, date: Int32?) {
+    static func recordOriginalMessage(id: Int32, peerId: Int64, text: String, date: Int32?) {
         guard id != 0, !text.isEmpty else { return }
-        var alreadySaved = false
-        var chainHasBase = false
-        origTextsQueue.sync {
-            loadOrigTextsIfNeeded()
-            if let existing = _originalTexts[id], !existing.isEmpty {
-                alreadySaved = true
-            }
-        }
-        editedTextsQueue.sync {
-            loadEditChainsIfNeeded()
-            if let existingChain = _editChains[id], !existingChain.isEmpty {
-                chainHasBase = true
-            }
-        }
-        if alreadySaved && chainHasBase { return }
+        let key = makeKey(msgId: id, peerId: peerId)
 
         origTextsQueue.async(flags: .barrier) {
-            loadOrigTextsIfNeeded()
-            if _originalTexts[id] == nil {
-                _originalTexts[id] = text
-                var saved = (UserDefaults.standard.dictionary(forKey: origTextsUdKey) as? [String: String]) ?? [:]
-                saved[String(id)] = text
-                if saved.count > 1000 {
-                    let keysToRemove = Array(saved.keys.prefix(saved.count - 1000))
-                    for k in keysToRemove { saved.removeValue(forKey: k) }
-                }
-                UserDefaults.standard.set(saved, forKey: origTextsUdKey)
+            loadDatabaseIfNeeded()
+            if _originalTexts[key] == nil {
+                _originalTexts[key] = text
+                saveDatabaseDebounced()
             }
         }
-        appendEditChain(id: id, text: text, date: date)
+        appendEditChain(key: key, text: text, date: date)
     }
 
     @objc static func recordEditedMessage(id: Int32, newText: String) {
+        recordEditedMessage(id: id, peerId: 0, newText: newText)
+    }
+
+    static func recordEditedMessage(id: Int32, peerId: Int64, newText: String) {
         guard id != 0 else { return }
-        
-        editedIdsQueue.async(flags: .barrier) {
-            loadEditedIdsIfNeeded()
-            _editedIds.insert(id)
-            var saved = (UserDefaults.standard.array(forKey: editedIdsUdKey) as? [Int32]) ?? []
-            if !saved.contains(id) {
-                saved.append(id)
-                if saved.count > 1000 { saved.removeFirst(saved.count - 1000) }
-                UserDefaults.standard.set(saved, forKey: editedIdsUdKey)
-            }
-        }
+        let key = makeKey(msgId: id, peerId: peerId)
 
         var origText: String?
         origTextsQueue.sync {
-            loadOrigTextsIfNeeded()
-            origText = _originalTexts[id]
-        }
-        if origText == nil {
-            editedTextsQueue.sync {
-                loadEditedTextsIfNeeded()
-                origText = _editedOriginalTexts[id]
+            loadDatabaseIfNeeded()
+            origText = _originalTexts[key]
+            if origText == nil && peerId != 0 {
+                origText = _originalTexts["\(id)"]
             }
         }
 
-        if let orig = origText, orig != newText {
-            editedTextsQueue.async(flags: .barrier) {
-                loadEditedTextsIfNeeded()
-                if _editedOriginalTexts[id] == nil {
-                    _editedOriginalTexts[id] = orig
-                    var saved = (UserDefaults.standard.dictionary(forKey: editedTextsUdKey) as? [String: String]) ?? [:]
-                    saved[String(id)] = orig
-                    if saved.count > 1000 {
-                        let keysToRemove = Array(saved.keys.prefix(saved.count - 1000))
-                        for k in keysToRemove { saved.removeValue(forKey: k) }
+        // CRITICAL FIX: Only mark as edited IF we actually have a cached original text AND it differs!
+        guard let orig = origText, !orig.isEmpty, orig != newText else {
+            // If we don't have original text yet, record newText as original so future edits are caught
+            if origText == nil && !newText.isEmpty {
+                origTextsQueue.async(flags: .barrier) {
+                    loadDatabaseIfNeeded()
+                    if _originalTexts[key] == nil {
+                        _originalTexts[key] = newText
+                        saveDatabaseDebounced()
                     }
-                    UserDefaults.standard.set(saved, forKey: editedTextsUdKey)
                 }
             }
+            return
         }
 
-        if !newText.isEmpty {
-            appendEditChain(id: id, text: newText, date: nil)
+        // We have genuine original text that differs from newText!
+        editedTextsQueue.async(flags: .barrier) {
+            loadDatabaseIfNeeded()
+            if _editedOriginalTexts[key] == nil {
+                _editedOriginalTexts[key] = orig
+            }
+            _editedKeys.insert(key)
+            appendEditChain(key: key, text: newText, date: nil)
+            saveDatabaseDebounced()
         }
 
         DispatchQueue.main.async {
-            NotificationCenter.default.post(name: NSNotification.Name("TweakMessageEditedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
             NotificationCenter.default.post(name: NSNotification.Name("LeadMessageEditedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
-        }
-    }
-
-    @objc static func isEdited(_ msgId: NSNumber) -> Bool {
-        let id = msgId.int32Value
-        return editedIdsQueue.sync {
-            loadEditedIdsIfNeeded()
-            return _editedIds.contains(id)
+            NotificationCenter.default.post(name: NSNotification.Name("TweakMessageEditedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
         }
     }
 
@@ -441,49 +504,25 @@ class TLParser: NSObject {
     }
 
     @objc static func isNodeEdited(_ node: Any) -> Bool {
-        var editDate: Int32?
-        var origDate: Int32?
-        var currentText: String?
-        var msgIdVal: Int32?
-        inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgIdVal)
-        let finalId = msgIdVal ?? getMessageIdFromNode(node)?.int32Value
-
-        let hasEditAttr = (editDate != nil)
-        let isKnownEdited = (finalId != nil && isEdited(NSNumber(value: finalId!)))
-
-        if hasEditAttr || isKnownEdited {
-            if let id = finalId, let cur = currentText, !cur.isEmpty {
-                recordEditedMessage(id: id, newText: cur)
-            }
-            return true
-        }
-
-        if checkViewsForEditedText(node) {
-            if let id = finalId, let cur = currentText, !cur.isEmpty {
-                recordEditedMessage(id: id, newText: cur)
-            }
-            return true
-        }
-
-        // Message is unedited: eagerly record original text and timestamp!
-        if let id = finalId, let cur = currentText, !cur.isEmpty {
-            recordOriginalMessage(id: id, text: cur, date: origDate)
-        }
-        return false
+        guard let info = getMessageInfoFromNode(node) else { return false }
+        let msgId = info["msgId"] as? NSNumber
+        let peerId = info["peerId"] as? NSNumber
+        let curText = info["text"] as? NSString
+        return isEditedWithMsgId(msgId, peerId: peerId, currentText: curText)
     }
 
     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
-        var editDate: Int32?
-        var origDate: Int32?
-        var currentText: String?
-        var msgIdVal: Int32?
-        inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgIdVal)
-        
-        let id = msgIdVal ?? getMessageIdFromNode(node)?.int32Value ?? 0
-        
+        guard let info = getMessageInfoFromNode(node) else { return NSArray() }
+        let msgId = (info["msgId"] as? NSNumber)?.int32Value ?? 0
+        let peerId = (info["peerId"] as? NSNumber)?.int64Value ?? 0
+        let curText = (info["text"] as? String) ?? ""
+        guard msgId != 0 else { return NSArray() }
+
+        let key = makeKey(msgId: msgId, peerId: peerId)
+
         let df = DateFormatter()
         df.dateFormat = "HH:mm:ss"
-        
+
         func formatBadge(_ ts: Int32?) -> String {
             if let t = ts, t > 0 {
                 let d = Date(timeIntervalSince1970: TimeInterval(t))
@@ -493,96 +532,57 @@ class TLParser: NSObject {
         }
 
         var chain: [[String: Any]] = []
-        if id != 0 {
-            editedTextsQueue.sync {
-                loadEditChainsIfNeeded()
-                chain = _editChains[id] ?? []
-            }
-        }
-
         var origText: String?
-        if id != 0 {
-            editedTextsQueue.sync {
-                loadEditedTextsIfNeeded()
-                origText = _editedOriginalTexts[id]
-            }
-            if origText == nil {
-                origTextsQueue.sync {
-                    loadOrigTextsIfNeeded()
-                    origText = _originalTexts[id]
-                }
-            }
+
+        editedTextsQueue.sync {
+            loadDatabaseIfNeeded()
+            chain = _editChains[key] ?? (peerId != 0 ? (_editChains["\(msgId)"] ?? []) : [])
+            origText = _editedOriginalTexts[key] ?? (peerId != 0 ? _editedOriginalTexts["\(msgId)"] : nil)
         }
 
-        // If this node is unedited, cache its text eagerly
-        if editDate == nil, let cur = currentText, !cur.isEmpty, id != 0 {
-            recordOriginalMessage(id: id, text: cur, date: origDate)
-            if origText == nil { origText = cur }
+        if origText == nil {
+            origTextsQueue.sync {
+                loadDatabaseIfNeeded()
+                origText = _originalTexts[key] ?? (peerId != 0 ? _originalTexts["\(msgId)"] : nil)
+            }
         }
-
-        let resolvedOrigTime = origDate ?? (editDate != nil ? (editDate! - 60) : Int32(Date().timeIntervalSince1970 - 60))
 
         if let o = origText, !o.isEmpty {
             if chain.isEmpty {
                 chain.append([
-                    "date": resolvedOrigTime,
+                    "date": Int32(Date().timeIntervalSince1970 - 60),
                     "text": o
                 ])
-                if let cur = currentText, !cur.isEmpty, cur != o {
+                if !curText.isEmpty && curText != o {
                     chain.append([
-                        "date": editDate ?? Int32(Date().timeIntervalSince1970),
-                        "text": cur
+                        "date": Int32(Date().timeIntervalSince1970),
+                        "text": curText
                     ])
-                    if id != 0 {
-                        appendEditChain(id: id, text: cur, date: editDate)
-                    }
                 }
             } else {
                 if let firstText = chain.first?["text"] as? String, firstText != o {
                     chain.insert([
-                        "date": resolvedOrigTime,
+                        "date": Int32(Date().timeIntervalSince1970 - 60),
                         "text": o
                     ], at: 0)
                 }
-                if let cur = currentText, !cur.isEmpty {
-                    if let lastText = chain.last?["text"] as? String, lastText != cur {
-                        chain.append([
-                            "date": editDate ?? Int32(Date().timeIntervalSince1970),
-                            "text": cur
-                        ])
-                        if id != 0 {
-                            appendEditChain(id: id, text: cur, date: editDate)
-                        }
-                    }
-                }
-            }
-        } else if let cur = currentText, !cur.isEmpty {
-            if let last = chain.last, let lastText = last["text"] as? String {
-                if lastText != cur {
+                if !curText.isEmpty, let lastText = chain.last?["text"] as? String, lastText != curText {
                     chain.append([
-                        "date": editDate ?? Int32(Date().timeIntervalSince1970),
-                        "text": cur
+                        "date": Int32(Date().timeIntervalSince1970),
+                        "text": curText
                     ])
-                    if id != 0 {
-                        appendEditChain(id: id, text: cur, date: editDate)
-                    }
                 }
-            } else if chain.isEmpty {
-                chain.append([
-                    "date": editDate ?? Int32(Date().timeIntervalSince1970),
-                    "text": cur
-                ])
             }
         }
 
         var list: [[String: Any]] = []
         let total = chain.count
-        
+
         for (idx, item) in chain.enumerated() {
             let itemText = (item["text"] as? String) ?? ""
             let itemDate = item["date"] as? Int32
             let timeStr = formatBadge(itemDate)
-            
+
             let labelStr: String
             if idx == 0 && (total > 1 || origText != nil) {
                 labelStr = "Original message"
@@ -593,7 +593,7 @@ class TLParser: NSObject {
             } else {
                 labelStr = "Edited"
             }
-            
+
             list.append([
                 "badge": timeStr,
                 "label": labelStr,
@@ -602,13 +602,12 @@ class TLParser: NSObject {
             ])
         }
 
-        if list.isEmpty {
-            let timeStr = formatBadge(editDate)
+        if list.isEmpty, let o = origText {
             list.append([
-                "badge": timeStr,
-                "label": "Edited",
-                "text": currentText ?? "(Original text not cached)",
-                "isOriginal": false
+                "badge": formatBadge(nil),
+                "label": "Original message",
+                "text": o,
+                "isOriginal": true
             ])
         }
 
@@ -616,16 +615,24 @@ class TLParser: NSObject {
     }
 
     @objc static func getOriginalTextForId(_ msgId: NSNumber) -> NSString? {
-        let id = msgId.int32Value
+        return getOriginalTextForId(msgId, peerId: nil)
+    }
+
+    @objc static func getOriginalTextForId(_ msgId: NSNumber, peerId: NSNumber?) -> NSString? {
+        let m = msgId.int32Value
+        let p = peerId?.int64Value ?? 0
+        let key = makeKey(msgId: m, peerId: p)
+
         if let text = editedTextsQueue.sync(execute: { () -> String? in
-            loadEditedTextsIfNeeded()
-            return _editedOriginalTexts[id]
+            loadDatabaseIfNeeded()
+            return _editedOriginalTexts[key] ?? (p != 0 ? _editedOriginalTexts["\(m)"] : nil)
         }) {
             return text as NSString
         }
+
         return origTextsQueue.sync {
-            loadOrigTextsIfNeeded()
-            if let text = _originalTexts[id] {
+            loadDatabaseIfNeeded()
+            if let text = _originalTexts[key] ?? (p != 0 ? _originalTexts["\(m)"] : nil) {
                 return text as NSString
             }
             return nil
@@ -711,46 +718,91 @@ class TLParser: NSObject {
 
     /// Dynamically extracts message ID from a ChatMessageBubbleItemNode
     @objc static func getMessageIdFromNode(_ node: Any) -> NSNumber? {
-        var currentMirror: Mirror? = Mirror(reflecting: node)
+        if let info = getMessageInfoFromNode(node), let id = info["msgId"] as? NSNumber {
+            return id
+        }
+        return nil
+    }
+
+    /// Fast, shallow reflection to extract msgId, peerId, isOutgoing, and text in < 1 microsecond.
+    @objc static func getMessageInfoFromNode(_ node: Any) -> NSDictionary? {
+        let unwrappedNode = unwrapOptional(node)
+        var targetItem: Any?
+
+        var currentMirror: Mirror? = Mirror(reflecting: unwrappedNode)
         while let mirror = currentMirror {
             for child in mirror.children {
                 let lbl = child.label ?? ""
                 if lbl == "appliedItem" || lbl == "item" || lbl == "currentInputParams" {
-                    if let id = getMessageId(from: child.value) {
-                        return id
-                    }
+                    targetItem = child.value
+                    break
                 }
             }
+            if targetItem != nil { break }
             currentMirror = mirror.superclassMirror
         }
-        
-        var m: Mirror? = Mirror(reflecting: node)
-        while let mirror = m {
-            for child in mirror.children {
-                let lbl = child.label ?? ""
-                if lbl != "appliedItem" && lbl != "item" && lbl != "currentInputParams" && lbl != "view" && lbl != "subnodes" {
-                    if let id = getMessageId(from: child.value) {
-                        return id
+
+        guard let item = targetItem else { return nil }
+        let unwrappedItem = unwrapOptional(item)
+
+        var rawMessage: Any?
+        let itemMirror = Mirror(reflecting: unwrappedItem)
+        for child in itemMirror.children {
+            let lbl = child.label ?? ""
+            if lbl == "message" || lbl == "firstMessage" {
+                rawMessage = child.value
+                break
+            } else if lbl == "content" {
+                let contentMirror = Mirror(reflecting: unwrapOptional(child.value))
+                for cChild in contentMirror.children {
+                    if cChild.label == "firstMessage" || cChild.label == "message" {
+                        rawMessage = cChild.value
+                        break
                     }
                 }
-            }
-            m = mirror.superclassMirror
-        }
-        
-        let nodeDesc = String(describing: node)
-        let nsRange = NSRange(nodeDesc.startIndex..<nodeDesc.endIndex, in: nodeDesc)
-        if let regex = messageIdRegex, let match = regex.firstMatch(in: nodeDesc, options: [], range: nsRange) {
-            if let idRange = Range(match.range(at: 1), in: nodeDesc), let id = Int32(nodeDesc[idRange]) {
-                return NSNumber(value: id)
+                if rawMessage != nil { break }
             }
         }
-        if let regex = fallbackRegex, let match = regex.firstMatch(in: nodeDesc, options: [], range: nsRange) {
-            if let idRange = Range(match.range(at: 1), in: nodeDesc), let id = Int32(nodeDesc[idRange]) {
-                return NSNumber(value: id)
+
+        guard let msg = rawMessage else { return nil }
+        let unwrappedMsg = unwrapOptional(msg)
+        let msgMirror = Mirror(reflecting: unwrappedMsg)
+
+        var msgId: Int32?
+        var peerId: Int64?
+        var text: String?
+        var isIncoming = false
+
+        for child in msgMirror.children {
+            let lbl = child.label ?? ""
+            if lbl == "id" {
+                let idMirror = Mirror(reflecting: unwrapOptional(child.value))
+                for idChild in idMirror.children {
+                    if idChild.label == "id", let idVal = idChild.value as? Int32 {
+                        msgId = idVal
+                    } else if idChild.label == "peerId" {
+                        peerId = extractId(fromPeerId: idChild.value)?.int64Value
+                    }
+                }
+            } else if lbl == "text", let t = child.value as? String {
+                text = t
+            } else if lbl == "flags" {
+                let flagsDesc = String(describing: child.value)
+                if flagsDesc.contains("Incoming") || flagsDesc.contains("incoming") {
+                    isIncoming = true
+                }
             }
         }
-        
-        return nil
+
+        guard let id = msgId else { return nil }
+
+        let dict: [String: Any] = [
+            "msgId": NSNumber(value: id),
+            "peerId": NSNumber(value: peerId ?? 0),
+            "isOutgoing": NSNumber(value: !isIncoming),
+            "text": text ?? ""
+        ]
+        return dict as NSDictionary
     }
 
     @objc static func getDebugDumpFromNode(_ node: Any) -> NSString {
@@ -877,10 +929,6 @@ class TLParser: NSObject {
         let savedId = UserDefaults.standard.integer(forKey: "LeadLastKnownUserId")
         if savedId != 0 { return NSNumber(value: Int64(savedId)) }
         return nil
-    }
-
-    @objc static func isDeleted(_ msgId: NSNumber) -> Bool {
-        return deletedIds.contains(msgId.int32Value)
     }
 
     // Deleted indicator is now rendered as a visual DEL pill badge on the cell.
@@ -1149,15 +1197,27 @@ class TLParser: NSObject {
         return (newMessageText, newEntities)
     }
 
+    private static func extractPeerId(from peer: Api.Peer) -> Int64 {
+        switch peer {
+        case .peerChannel(let d):
+            return d.channelId
+        case .peerChat(let d):
+            return d.chatId
+        case .peerUser(let d):
+            return d.userId
+        }
+    }
+
     private static func stripTTLMessage(_ apiMsg: Api.Message) -> (Api.Message, Bool) {
         guard case let .message(data) = apiMsg else {
             return (apiMsg, false)
         }
         
+        let pid = extractPeerId(from: data.peerId)
         if data.editDate == nil {
-            recordOriginalMessage(id: data.id, text: data.message, date: data.date)
+            recordOriginalMessage(id: data.id, peerId: pid, text: data.message, date: data.date)
         } else {
-            recordEditedMessage(id: data.id, newText: data.message)
+            recordEditedMessage(id: data.id, peerId: pid, newText: data.message)
         }
 
         guard isNoForwardsBypassActive || 
@@ -1257,7 +1317,8 @@ class TLParser: NSObject {
             return (.updateNewChannelMessage(Api.Update.Cons_updateNewChannelMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
         case let .updateEditMessage(data):
             if case let .message(msgData) = data.message {
-                recordEditedMessage(id: msgData.id, newText: msgData.message)
+                let pid = extractPeerId(from: msgData.peerId)
+                recordEditedMessage(id: msgData.id, peerId: pid, newText: msgData.message)
             }
             let (strippedMsg, changed) = stripTTLMessage(data.message)
             if !changed {
@@ -1266,7 +1327,8 @@ class TLParser: NSObject {
             return (.updateEditMessage(Api.Update.Cons_updateEditMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
         case let .updateEditChannelMessage(data):
             if case let .message(msgData) = data.message {
-                recordEditedMessage(id: msgData.id, newText: msgData.message)
+                let pid = extractPeerId(from: msgData.peerId)
+                recordEditedMessage(id: msgData.id, peerId: pid, newText: msgData.message)
             }
             let (strippedMsg, changed) = stripTTLMessage(data.message)
             if !changed {
@@ -1276,7 +1338,7 @@ class TLParser: NSObject {
         case let .updateDeleteMessages(data):
             if isAntiRevokeActive || isAntiSelfDestructActive {
                 for id in data.messages {
-                    TLParser.addDeletedId(id)
+                    TLParser.addDeletedId(id, channelId: 0)
                 }
                 return (.updateDeleteMessages(Api.Update.Cons_updateDeleteMessages(messages: [], pts: data.pts, ptsCount: data.ptsCount)), true)
             }
@@ -1284,24 +1346,18 @@ class TLParser: NSObject {
         case let .updateDeleteChannelMessages(data):
             if isAntiRevokeActive || isAntiSelfDestructActive {
                 for id in data.messages {
-                    TLParser.addDeletedId(id)
+                    TLParser.addDeletedId(id, channelId: data.channelId)
                 }
                 return (.updateDeleteChannelMessages(Api.Update.Cons_updateDeleteChannelMessages(channelId: data.channelId, messages: [], pts: data.pts, ptsCount: data.ptsCount)), true)
             }
             return (update, false)
         case let .updateReadMessagesContents(data):
-            if isAntiRevokeActive || isAntiSelfDestructActive {
-                for id in data.messages {
-                    TLParser.addDeletedId(id)
-                }
+            if isAntiSelfDestructActive {
                 return (.updateReadMessagesContents(Api.Update.Cons_updateReadMessagesContents(flags: data.flags, messages: [], pts: data.pts, ptsCount: data.ptsCount, date: data.date)), true)
             }
             return (update, false)
         case let .updateChannelReadMessagesContents(data):
-            if isAntiRevokeActive || isAntiSelfDestructActive {
-                for id in data.messages {
-                    TLParser.addDeletedId(id)
-                }
+            if isAntiSelfDestructActive {
                 return (.updateChannelReadMessagesContents(Api.Update.Cons_updateChannelReadMessagesContents(flags: data.flags, channelId: data.channelId, topMsgId: data.topMsgId, savedPeerId: data.savedPeerId, messages: [])), true)
             }
             return (update, false)
@@ -1371,7 +1427,7 @@ class TLParser: NSObject {
                     modified = true
                 }
             case let .updateShortMessage(data):
-                recordOriginalMessage(id: data.id, text: data.message, date: data.date)
+                recordOriginalMessage(id: data.id, peerId: data.userId, text: data.message, date: data.date)
                 var isDestructing = false
                 if data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0 {
                     isDestructing = true
@@ -1403,7 +1459,7 @@ class TLParser: NSObject {
                     modified = true
                 }
             case let .updateShortChatMessage(data):
-                recordOriginalMessage(id: data.id, text: data.message, date: data.date)
+                recordOriginalMessage(id: data.id, peerId: data.chatId, text: data.message, date: data.date)
                 var isDestructing = false
                 if data.ttlPeriod != nil || (Int(data.flags) & Int(1 << 25)) != 0 {
                     isDestructing = true

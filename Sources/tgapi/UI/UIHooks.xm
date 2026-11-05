@@ -433,36 +433,45 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     }
     objc_setAssociatedObject(v, "TweakMessageNode", node, OBJC_ASSOCIATION_ASSIGN);
 
-    // Node-level caching for message ID
-    NSNumber *msgId = objc_getAssociatedObject(node, "TweakMsgId");
-    if (!msgId) {
-        msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
-        if (msgId) {
-            objc_setAssociatedObject(node, "TweakMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-    }
+    // Node-level caching for message info:
+    // If already inspected and found to be non-message or invalid, cached is [NSNull null] -> instant exit!
+    id cachedInfo = objc_getAssociatedObject(node, "TweakMsgInfo");
+    if (cachedInfo == [NSNull null]) return;
 
-    BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
-
-    // Node-level caching for edited state
-    NSNumber *cachedIsEdit = objc_getAssociatedObject(node, "TweakIsEdit");
-    BOOL isEdit = NO;
-    if (cachedIsEdit != nil) {
-        isEdit = [cachedIsEdit boolValue];
+    NSDictionary *info = nil;
+    if ([cachedInfo isKindOfClass:[NSDictionary class]]) {
+        info = (NSDictionary *)cachedInfo;
     } else {
-        isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
-        objc_setAssociatedObject(node, "TweakIsEdit", @(isEdit), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        info = [NSClassFromString(@"TLParser") getMessageInfoFromNode:node];
+        if (!info) {
+            objc_setAssociatedObject(node, "TweakMsgInfo", [NSNull null], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            return;
+        }
+        objc_setAssociatedObject(node, "TweakMsgInfo", info, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+
+    NSNumber *msgId = info[@"msgId"];
+    NSNumber *peerId = info[@"peerId"];
+    NSString *text = info[@"text"];
+    BOOL isOutgoingFromInfo = [info[@"isOutgoing"] boolValue];
+
+    BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeletedWithMsgId:msgId peerId:peerId]);
+    BOOL isEdit = (msgId != nil && [NSClassFromString(@"TLParser") isEditedWithMsgId:msgId peerId:peerId currentText:text]);
 
     // FAST PATH: Unedited and undeleted message (99.9% of messages during scrolling)
     if (!isDel && !isEdit) {
-        for (UIView *sub in v.subviews) {
-            if (sub.tag == 998855 || sub.tag == 998856 || sub.tag == 998866) {
-                sub.hidden = YES;
+        if (objc_getAssociatedObject(node, "TweakHadBadge")) {
+            for (UIView *sub in v.subviews) {
+                if (sub.tag == 998855 || sub.tag == 998856 || sub.tag == 998866) {
+                    sub.hidden = YES;
+                }
             }
+            objc_setAssociatedObject(node, "TweakHadBadge", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         return;
     }
+
+    objc_setAssociatedObject(node, "TweakHadBadge", @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     // SLOW PATH: Message is actually deleted or edited.
     // Find direct badges on v and clean up duplicates
@@ -517,6 +526,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         delBadge.hidden = NO;
         if (msgId) {
             objc_setAssociatedObject(delBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            if (peerId) objc_setAssociatedObject(delBadge, "TweakBadgePeerId", peerId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
     } else {
         if (delBadge) delBadge.hidden = YES;
@@ -542,6 +552,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         editBadge.hidden = NO;
         if (msgId) {
             objc_setAssociatedObject(editBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            if (peerId) objc_setAssociatedObject(editBadge, "TweakBadgePeerId", peerId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         objc_setAssociatedObject(editBadge, "TweakBadgeNode", node, OBJC_ASSOCIATION_ASSIGN);
     } else {
@@ -562,7 +573,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     CGFloat maxX = rowWidth - 5.0;
     CGFloat minX = 5.0;
 
-    BOOL isOutgoing = isNodeOutgoing(node, bFrame, rowWidth);
+    BOOL isOutgoing = isOutgoingFromInfo || isNodeOutgoing(node, bFrame, rowWidth);
 
     CGFloat availableSpace = isOutgoing ? bFrame.origin.x : (rowWidth - CGRectGetMaxX(bFrame));
     BOOL hasPlentyOfSpace = (availableSpace >= 85.0);
@@ -573,14 +584,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     // Check single-line crowding: only if crowded (not plenty of space) and text is long (>= 34 chars)
     BOOL isSingleLineCrowded = NO;
     if (!isMultiLine && isDel && isEdit && !hasPlentyOfSpace) {
-        NSString *nodeText = nil;
-        if (msgId) {
-            nodeText = (NSString *)[NSClassFromString(@"TLParser") getOriginalTextForId:msgId];
-        }
-        if (!nodeText) {
-            nodeText = getNodeText(node);
-        }
-        if (nodeText && nodeText.length >= 34) {
+        if (text && text.length >= 34) {
             isSingleLineCrowded = YES;
         }
     }
@@ -696,6 +700,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
     ASDisplayNode *node = objc_getAssociatedObject(view, "TweakMessageNode");
     if (node) {
         objc_setAssociatedObject(node, "TweakIsEdit", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(node, "TweakMsgInfo", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     NSString *className = NSStringFromClass([view class]);
     if ([className containsString:@"ChatMessage"]) {

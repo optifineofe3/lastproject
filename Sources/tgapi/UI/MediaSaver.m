@@ -1651,13 +1651,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
                 }
             ];
         } else {
-            history = @[
-                @{
-                    @"badge": @"[--:--:--]",
-                    @"label": @"Edited",
-                    @"text": @"(Original text not cached)"
-                }
-            ];
+            return;
         }
     }
 
