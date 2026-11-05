@@ -411,6 +411,18 @@ static id safeInvokeGetter(id obj, NSString *selectorName) {
     return nil;
 }
 
+static void safeInvokeVoid(id obj, NSString *selectorName) {
+    if (!obj || !selectorName) return;
+    SEL sel = NSSelectorFromString(selectorName);
+    if ([obj respondsToSelector:sel]) {
+        @try {
+            IMP imp = [obj methodForSelector:sel];
+            void (*func)(id, SEL) = (void (*)(id, SEL))imp;
+            func(obj, sel);
+        } @catch (...) {}
+    }
+}
+
 static id findCentralGalleryItemNode(UIViewController *controller) {
     if (!controller || !controller.isViewLoaded) return nil;
     UIView *rootView = controller.view;
@@ -1606,11 +1618,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 
     // 4. Photo is not yet downloaded or rendered! Trigger fetch if possible and poll until ready
     customLog2(@"[MediaSaver] Photo not ready yet, initiating download and polling...");
-    if (target && [target respondsToSelector:NSSelectorFromString(@"statusPressed")]) {
-        @try {
-            [target performSelector:NSSelectorFromString(@"statusPressed")];
-        } @catch (...) {}
-    }
+    safeInvokeVoid(target, @"statusPressed");
 
     [self startDownloadingAndSaveGalleryPhotoForTarget:target controller:controller];
 }
