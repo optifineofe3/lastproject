@@ -45,8 +45,15 @@ static id openedVideoPathsLock = nil;
 static void recordPlayingVideo(const char *path) {
     if (!path || path[0] == '\0') return;
     pthread_mutex_lock(&played_video_mutex);
+    double now = CFAbsoluteTimeGetCurrent();
+    if (last_played_video_path[0] != '\0' && strcmp(last_played_video_path, path) == 0) {
+        if (now - last_played_video_time < 1.0) {
+            pthread_mutex_unlock(&played_video_mutex);
+            return;
+        }
+    }
     strlcpy(last_played_video_path, path, sizeof(last_played_video_path));
-    last_played_video_time = CFAbsoluteTimeGetCurrent();
+    last_played_video_time = now;
     pthread_mutex_unlock(&played_video_mutex);
 }
 
@@ -111,28 +118,38 @@ static int hook_close(int fd) {
 static ssize_t hook_read(int fd, void *buf, size_t nbyte) {
     ssize_t ret = orig_read ? orig_read(fd, buf, nbyte) : read(fd, buf, nbyte);
     if (ret > 0 && fd >= 0 && fd < MAX_TRACKED_FDS) {
+        // Fast path: if fd is not tracked at all, early-exit with zero locks
+        if (!fd_to_path[fd]) {
+            return ret;
+        }
+
         char *path = NULL;
         uint8_t isVid = 0;
         pthread_mutex_lock(&fd_mutex);
         if (fd_to_path[fd]) {
-            if (fd_is_video[fd] == 0 && ret >= 8) {
-                const char *b = (const char *)buf;
-                if (memcmp(b + 4, "ftyp", 4) == 0 ||
-                    memcmp(b + 4, "moov", 4) == 0 ||
-                    memcmp(b + 4, "wide", 4) == 0 ||
-                    memcmp(b, "\x1A\x45\xDF\xA3", 4) == 0) {
-                    fd_is_video[fd] = 1;
-                } else {
-                    size_t scanLimit = (ret < 64) ? ret : 64;
-                    for (size_t i = 0; i + 4 <= scanLimit; i++) {
-                        if (memcmp(b + i, "ftyp", 4) == 0 || memcmp(b + i, "moov", 4) == 0) {
-                            fd_is_video[fd] = 1;
-                            break;
+            if (fd_is_video[fd] == 0) {
+                if (ret >= 8) {
+                    const char *b = (const char *)buf;
+                    if (memcmp(b + 4, "ftyp", 4) == 0 ||
+                        memcmp(b + 4, "moov", 4) == 0 ||
+                        memcmp(b + 4, "wide", 4) == 0 ||
+                        memcmp(b, "\x1A\x45\xDF\xA3", 4) == 0) {
+                        fd_is_video[fd] = 1;
+                    } else {
+                        size_t scanLimit = (ret < 64) ? ret : 64;
+                        for (size_t i = 0; i + 4 <= scanLimit; i++) {
+                            if (memcmp(b + i, "ftyp", 4) == 0 || memcmp(b + i, "moov", 4) == 0) {
+                                fd_is_video[fd] = 1;
+                                break;
+                            }
+                        }
+                        if (fd_is_video[fd] == 0 && ret >= 64) {
+                            fd_is_video[fd] = 2; // Marked as non-video: avoid re-scanning subsequent chunks
                         }
                     }
                 }
             }
-            isVid = fd_is_video[fd];
+            isVid = (fd_is_video[fd] == 1);
             path = fd_to_path[fd];
         }
         pthread_mutex_unlock(&fd_mutex);
@@ -147,28 +164,38 @@ static ssize_t hook_read(int fd, void *buf, size_t nbyte) {
 static ssize_t hook_pread(int fd, void *buf, size_t nbyte, off_t offset) {
     ssize_t ret = orig_pread ? orig_pread(fd, buf, nbyte, offset) : pread(fd, buf, nbyte, offset);
     if (ret > 0 && fd >= 0 && fd < MAX_TRACKED_FDS) {
+        // Fast path: if fd is not tracked at all, early-exit with zero locks
+        if (!fd_to_path[fd]) {
+            return ret;
+        }
+
         char *path = NULL;
         uint8_t isVid = 0;
         pthread_mutex_lock(&fd_mutex);
         if (fd_to_path[fd]) {
-            if (fd_is_video[fd] == 0 && ret >= 8) {
-                const char *b = (const char *)buf;
-                if (offset == 0 && (memcmp(b + 4, "ftyp", 4) == 0 ||
-                                    memcmp(b + 4, "moov", 4) == 0 ||
-                                    memcmp(b + 4, "wide", 4) == 0 ||
-                                    memcmp(b, "\x1A\x45\xDF\xA3", 4) == 0)) {
-                    fd_is_video[fd] = 1;
-                } else {
-                    size_t scanLimit = (ret < 64) ? ret : 64;
-                    for (size_t i = 0; i + 4 <= scanLimit; i++) {
-                        if (memcmp(b + i, "ftyp", 4) == 0 || memcmp(b + i, "moov", 4) == 0) {
-                            fd_is_video[fd] = 1;
-                            break;
+            if (fd_is_video[fd] == 0) {
+                if (ret >= 8) {
+                    const char *b = (const char *)buf;
+                    if (offset == 0 && (memcmp(b + 4, "ftyp", 4) == 0 ||
+                                        memcmp(b + 4, "moov", 4) == 0 ||
+                                        memcmp(b + 4, "wide", 4) == 0 ||
+                                        memcmp(b, "\x1A\x45\xDF\xA3", 4) == 0)) {
+                        fd_is_video[fd] = 1;
+                    } else {
+                        size_t scanLimit = (ret < 64) ? ret : 64;
+                        for (size_t i = 0; i + 4 <= scanLimit; i++) {
+                            if (memcmp(b + i, "ftyp", 4) == 0 || memcmp(b + i, "moov", 4) == 0) {
+                                fd_is_video[fd] = 1;
+                                break;
+                            }
+                        }
+                        if (fd_is_video[fd] == 0 && (offset > 0 || ret >= 64)) {
+                            fd_is_video[fd] = 2; // Marked as non-video: avoid re-scanning subsequent chunks
                         }
                     }
                 }
             }
-            isVid = fd_is_video[fd];
+            isVid = (fd_is_video[fd] == 1);
             path = fd_to_path[fd];
         }
         pthread_mutex_unlock(&fd_mutex);
@@ -970,10 +997,6 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
         
         [btn setImage:downloadIconImageSmall() forState:UIControlStateNormal];
         [btn addTarget:[MediaSaver shared] action:@selector(handleInstantVideoButtonTap:) forControlEvents:UIControlEventTouchUpInside];
-        
-        UITapGestureRecognizer *singleTap = [[UITapGestureRecognizer alloc] initWithTarget:[MediaSaver shared] action:@selector(handleInstantVideoButtonTap:)];
-        singleTap.numberOfTapsRequired = 1;
-        [btn addGestureRecognizer:singleTap];
         
         btn.alpha = 0.0;
         btn.transform = CGAffineTransformMakeScale(0.70, 0.70);
@@ -1965,7 +1988,13 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         return;
     }
 
-    id node = objc_getAssociatedObject(v, "TweakMessageNode");
+    id node = nil;
+    if ([v respondsToSelector:@selector(asyncdisplaykit_node)]) {
+        node = [(id)v asyncdisplaykit_node];
+    }
+    if (!node) {
+        node = objc_getAssociatedObject(v, "TweakMessageNode");
+    }
     if (!node) return;
 
     BOOL isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
@@ -2014,7 +2043,14 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         }];
     }];
 
-    id node = objc_getAssociatedObject(badge, "TweakBadgeNode");
+    id node = nil;
+    UIView *pv = badge.superview;
+    if (pv && [pv respondsToSelector:@selector(asyncdisplaykit_node)]) {
+        node = [(id)pv asyncdisplaykit_node];
+    }
+    if (!node) {
+        node = objc_getAssociatedObject(badge, "TweakBadgeNode");
+    }
     NSNumber *msgId = objc_getAssociatedObject(badge, "TweakBadgeMsgId") ?: objc_getAssociatedObject(badge, "LeadBadgeMsgId");
 
     CGRect bFrame = CGRectZero;

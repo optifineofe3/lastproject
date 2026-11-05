@@ -119,28 +119,31 @@ bool shouldFixFilePicker() {
 __attribute__((constructor))
 static void initFileHooks() {
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),	^{
+		Class DocumentPickerViewController = objc_getClass("_TtC19LegacyMediaPickerUIP33_64C09C3310C8117D77D0819BBA77FD8A28DocumentPickerViewController");
+		Class LegacyICloudFileController = objc_getClass("_TtC19LegacyMediaPickerUIP33_64C09C3310C8117D77D0819BBA77FD8A26LegacyICloudFileController");
 		
-		int numClasses = objc_getClassList(NULL, 0);
-		Class *classes = (__unsafe_unretained Class *)malloc(sizeof(Class) * numClasses);
-		numClasses = objc_getClassList(classes, numClasses);
-		
-		Class DocumentPickerViewController = Nil;
-		Class LegacyICloudFileController = Nil;
-		
-		for (int i = 0; i < numClasses; i++) {
-			Class cls = classes[i];
-			NSString *className = NSStringFromClass(cls);
-			
-			if ([className containsString:@"LegacyMediaPickerUI"]) {
-				if ([className containsString:@"DocumentPickerViewController"]) {
-					DocumentPickerViewController = cls;
-				} else if ([className containsString:@"LegacyICloudFileController"]) {
-					LegacyICloudFileController = cls;
+		if (!DocumentPickerViewController || !LegacyICloudFileController) {
+			int numClasses = objc_getClassList(NULL, 0);
+			if (numClasses > 0) {
+				Class *classes = (__unsafe_unretained Class *)malloc(sizeof(Class) * numClasses);
+				if (classes) {
+					numClasses = objc_getClassList(classes, numClasses);
+					for (int i = 0; i < numClasses; i++) {
+						Class cls = classes[i];
+						const char *name = class_getName(cls);
+						if (name && strstr(name, "LegacyMediaPickerUI") != NULL) {
+							if (!DocumentPickerViewController && strstr(name, "DocumentPickerViewController") != NULL) {
+								DocumentPickerViewController = cls;
+							} else if (!LegacyICloudFileController && strstr(name, "LegacyICloudFileController") != NULL) {
+								LegacyICloudFileController = cls;
+							}
+						}
+						if (DocumentPickerViewController && LegacyICloudFileController) break;
+					}
+					free(classes);
 				}
 			}
 		}
-		
-		free(classes);
 		
 		if (DocumentPickerViewController && LegacyICloudFileController) {
 			%init(

@@ -117,28 +117,6 @@ bool shouldFakeLocation() {
 
 %end
 
-%hook MKCoreLocationProvider
-
-- (void)locationManager:(id)manager  didUpdateLocations:(id)locations {
-	NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-	if (shouldFakeLocation()) {
-		
-		// Get Our Saved Location
-		CGFloat savedLongitude = [defaults floatForKey:FAKE_LONGITUDE_KEY];
-        CGFloat savedLatitude = [defaults floatForKey:FAKE_LATITUDE_KEY];
-        
-		if (savedLongitude && savedLatitude) {
-            CLLocation *fakeLocation = [[CLLocation alloc] initWithLatitude:savedLatitude longitude:savedLongitude];
-            NSArray *fakeLocations = @[fakeLocation];
-			%orig(manager, fakeLocations);
-            return;
-        }
-	}
-	%orig;
-}
-
-%end
-
 %hook CLLocationManager
 
 - (id)init {
@@ -175,6 +153,23 @@ bool shouldFakeLocation() {
     });
 
     return %orig;
+}
+
+- (void)locationManager:(id)manager  didUpdateLocations:(id)locations {
+	NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+	if (shouldFakeLocation()) {
+		// Get Our Saved Location
+		CGFloat savedLongitude = [defaults floatForKey:FAKE_LONGITUDE_KEY];
+        CGFloat savedLatitude = [defaults floatForKey:FAKE_LATITUDE_KEY];
+        
+		if (savedLongitude && savedLatitude) {
+            CLLocation *fakeLocation = [[CLLocation alloc] initWithLatitude:savedLatitude longitude:savedLongitude];
+            NSArray *fakeLocations = @[fakeLocation];
+			%orig(manager, fakeLocations);
+            return;
+        }
+	}
+	%orig;
 }
 
 %end
