@@ -7,54 +7,58 @@
 
 /* Ghost Mode */
 "DISABLE_ONLINE_STATUS_TITLE" = "Hide Online Status";
-"DISABLE_ONLINE_STATUS_SUBTITLE" = "Prevent others from seeing you online.";
+"DISABLE_ONLINE_STATUS_SUBTITLE" = "Always appear offline";
 
 "DISABLE_TYPING_STATUS_TITLE" = "Hide Typing Status";
-"DISABLE_TYPING_STATUS_SUBTITLE" = "Prevent others from seeing when you are typing a message.";
+"DISABLE_TYPING_STATUS_SUBTITLE" = "Don’t show when you’re typing";
 
-"DISABLE_RECORDING_VIDEO_STATUS_TITLE" = "Hide Video Recording Status";
-"DISABLE_RECORDING_VIDEO_STATUS_SUBTITLE" = "Prevent others from seeing when you are recording a video.";
+"OTHER_ACTIVITIES_TITLE" = "Other Activities";
+"OTHER_ACTIVITIES_SECTION_HEADER" = "Other Activities";
 
-"DISABLE_UPLOADING_VIDEO_STATUS_TITLE" = "Hide Video Uploading Status";
-"DISABLE_UPLOADING_VIDEO_STATUS_SUBTITLE" = "Prevent others from seeing when you are uploading a video.";
+"DISABLE_RECORDING_VIDEO_STATUS_TITLE" = "Hide Video Recording";
+"DISABLE_RECORDING_VIDEO_STATUS_SUBTITLE" = "Hide when recording a video";
 
-"DISABLE_VC_MESSAGE_RECORDING_STATUS_TITLE" = "Hide Voice Recording Status";
-"DISABLE_VC_MESSAGE_RECORDING_STATUS_SUBTITLE" = "Prevent others from seeing when you are recording a voice message.";
+"DISABLE_UPLOADING_VIDEO_STATUS_TITLE" = "Hide Video Uploading";
+"DISABLE_UPLOADING_VIDEO_STATUS_SUBTITLE" = "Hide when uploading a video";
 
-"DISABLE_VC_MESSAGE_UPLOADING_STATUS_TITLE" = "Hide Voice Uploading Status";
-"DISABLE_VC_MESSAGE_UPLOADING_STATUS_SUBTITLE" = "Prevent others from seeing when you are uploading a voice message.";
+"DISABLE_VC_MESSAGE_RECORDING_STATUS_TITLE" = "Hide Voice Recording";
+"DISABLE_VC_MESSAGE_RECORDING_STATUS_SUBTITLE" = "Hide when recording a voice message";
 
-"DISABLE_UPLOADING_PHOTO_STATUS_TITLE" = "Hide Photo Uploading Status";
-"DISABLE_UPLOADING_PHOTO_STATUS_SUBTITLE" = "Prevent others from seeing when you are uploading a photo.";
+"DISABLE_VC_MESSAGE_UPLOADING_STATUS_TITLE" = "Hide Voice Uploading";
+"DISABLE_VC_MESSAGE_UPLOADING_STATUS_SUBTITLE" = "Hide when uploading a voice message";
 
-"DISABLE_UPLOADING_FILE_STATUS_TITLE" = "Hide File Uploading Status";
-"DISABLE_UPLOADING_FILE_STATUS_SUBTITLE" = "Prevent others from seeing when you are uploading a file.";
+"DISABLE_UPLOADING_PHOTO_STATUS_TITLE" = "Hide Photo Uploading";
+"DISABLE_UPLOADING_PHOTO_STATUS_SUBTITLE" = "Hide when uploading a photo";
 
-"DISABLE_CHOOSING_LOCATION_STATUS_TITLE" = "Hide Choosing Location Status";
-"DISABLE_CHOOSING_LOCATION_STATUS_SUBTITLE" = "Prevent others from seeing when you are selecting a location.";
+"DISABLE_UPLOADING_FILE_STATUS_TITLE" = "Hide File Uploading";
+"DISABLE_UPLOADING_FILE_STATUS_SUBTITLE" = "Hide when uploading a file";
 
-"DISABLE_CHOOSING_CONTACT_TITLE" = "Hide Choosing Contact Status";
-"DISABLE_CHOOSING_CONTACT_SUBTITLE" = "Prevent others from seeing when you are selecting a contact.";
+"DISABLE_RECORDING_ROUND_VIDEO_STATUS_TITLE" = "Hide Round Video Recording";
+"DISABLE_RECORDING_ROUND_VIDEO_STATUS_SUBTITLE" = "Hide when recording a round video";
 
-"DISABLE_PLAYING_GAME_STATUS_TITLE" = "Hide Playing Game Status";
-"DISABLE_PLAYING_GAME_STATUS_SUBTITLE" = "Prevent others from seeing when you are playing a game.";
+"DISABLE_UPLOADING_ROUND_VIDEO_STATUS_TITLE" = "Hide Round Video Uploading";
+"DISABLE_UPLOADING_ROUND_VIDEO_STATUS_SUBTITLE" = "Hide when uploading a round video";
 
-"DISABLE_RECORDING_ROUND_VIDEO_STATUS_TITLE" = "Hide Round Video Recording Status";
-"DISABLE_RECORDING_ROUND_VIDEO_STATUS_SUBTITLE" = "Prevent others from seeing when you are recording a round video message.";
+"DISABLE_CHOOSING_LOCATION_STATUS_TITLE" = "Hide Location Selecting";
+"DISABLE_CHOOSING_LOCATION_STATUS_SUBTITLE" = "Hide when choosing a location";
 
-"DISABLE_UPLOADING_ROUND_VIDEO_STATUS_TITLE" = "Hide Round Video Uploading Status";
+"DISABLE_CHOOSING_CONTACT_TITLE" = "Hide Contact Selecting";
+"DISABLE_CHOOSING_CONTACT_SUBTITLE" = "Hide when choosing a contact";
 
-"DISABLE_SPEAKING_IN_GROUP_CALL_STATUS_TITLE" = "Hide Speaking in Group Call Status";
-"DISABLE_SPEAKING_IN_GROUP_CALL_STATUS_SUBTITLE" = "Prevent others from seeing when you speak in a group call.";
+"DISABLE_CHOOSING_STICKER_STATUS_TITLE" = "Hide Sticker Selecting";
+"DISABLE_CHOOSING_STICKER_STATUS_SUBTITLE" = "Hide when choosing a sticker";
 
-"DISABLE_CHOOSING_STICKER_STATUS_TITLE" = "Hide Choosing Sticker Status";
-"DISABLE_CHOOSING_STICKER_STATUS_SUBTITLE" = "Prevent others from seeing when you are choosing a sticker.";
+"DISABLE_PLAYING_GAME_STATUS_TITLE" = "Hide Playing Game";
+"DISABLE_PLAYING_GAME_STATUS_SUBTITLE" = "Hide when playing a game";
 
-"DISABLE_EMOJI_INTERACTION_STATUS_TITLE" = "Hide Emoji Interaction Status";
-"DISABLE_EMOJI_INTERACTION_STATUS_SUBTITLE" = "Prevent others from seeing when you are interacting with emojis.";
+"DISABLE_SPEAKING_IN_GROUP_CALL_STATUS_TITLE" = "Hide Speaking in Group Call";
+"DISABLE_SPEAKING_IN_GROUP_CALL_STATUS_SUBTITLE" = "Hide when speaking in a group call";
 
-"DISABLE_EMOJI_ACKNOWLEDGEMENT_STATUS_TITLE" = "Hide Emoji Reaction Status";
-"DISABLE_EMOJI_ACKNOWLEDGEMENT_STATUS_SUBTITLE" = "Prevent others from seeing when you react to a message.";
+"DISABLE_EMOJI_INTERACTION_STATUS_TITLE" = "Hide Emoji Interaction";
+"DISABLE_EMOJI_INTERACTION_STATUS_SUBTITLE" = "Hide emoji interactions";
+
+"DISABLE_EMOJI_ACKNOWLEDGEMENT_STATUS_TITLE" = "Hide Emoji Reaction";
+"DISABLE_EMOJI_ACKNOWLEDGEMENT_STATUS_SUBTITLE" = "Hide emoji reactions";
 
 /* READ_RECEIPTS Section */
 "READ_RECEIPTS" = "Read Receipts";

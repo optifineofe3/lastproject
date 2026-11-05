@@ -9,6 +9,9 @@
 @interface TGExtra : UIViewController <UITableViewDataSource, UITableViewDelegate>
 @end
 
+@interface TGOtherActivities : UIViewController <UITableViewDataSource, UITableViewDelegate>
+@end
+
 @interface TGLocalization : NSObject
 - (NSString *)get:(NSString *)queryString;
 - (id)initWithVersion:(int)a code:(id)b dict:(id)c isActive:(BOOL)d;

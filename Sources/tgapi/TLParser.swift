@@ -14,6 +14,13 @@ class TLParser: NSObject {
     private static var _loaded = false
     private static var protectedChannelIds = Set<Int64>()
 
+    // Precompiled regular expressions for high-performance parsing without regex recompilation overhead
+    private static let messageIdRegex = try? NSRegularExpression(pattern: "MessageId\\(peerId: [^,]+, namespace: [^,]+, id: (\\d+)\\)", options: [])
+    private static let rawValueRegex = try? NSRegularExpression(pattern: "rawValue: \\d+\\):\\d+_(\\d+)", options: [])
+    private static let fallbackRegex = try? NSRegularExpression(pattern: "messageId: (\\d+)", options: [])
+    private static let dumpPatternRegex = try? NSRegularExpression(pattern: "MessageId.*?id: (\\d+)", options: [.dotMatchesLineSeparators])
+    private static let dumpRawValueRegex = try? NSRegularExpression(pattern: "rawValue: \\d+\\):\\d+_(\\d+)", options: [])
+
     /// Called from ObjC (Hooks.xm) before zeroing message IDs in anti-revoke.
     @objc static func addDeletedId(_ id: Int32) {
         guard id != 0 else { return }
@@ -386,7 +393,10 @@ class TLParser: NSObject {
             var m: Mirror? = Mirror(reflecting: node)
             while let mirror = m {
                 for child in mirror.children {
-                    extractFromAny(child.value, depth: 1, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgId)
+                    let lbl = child.label ?? ""
+                    if lbl != "appliedItem" && lbl != "item" && lbl != "currentInputParams" && lbl != "view" && lbl != "subnodes" {
+                        extractFromAny(child.value, depth: 1, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgId)
+                    }
                 }
                 m = mirror.superclassMirror
             }
@@ -394,25 +404,6 @@ class TLParser: NSObject {
 
         if currentText == nil, let displayNode = node as? NSObject, let isLoaded = displayNode.value(forKey: "isNodeLoaded") as? Bool, isLoaded, let v = displayNode.value(forKey: "view") as? UIView {
             currentText = scanViewForText(v, depth: 0)
-        }
-
-        if editDate == nil {
-            var dumpStr = ""
-            dump(node, to: &dumpStr, maxDepth: 4, maxItems: 300)
-            if dumpStr.contains("EditedMessageAttribute") {
-                let pattern = "EditedMessageAttribute.*?date: (\\d+)"
-                if let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) {
-                    let nsRange = NSRange(dumpStr.startIndex..<dumpStr.endIndex, in: dumpStr)
-                    if let match = regex.firstMatch(in: dumpStr, options: [], range: nsRange),
-                       let r = Range(match.range(at: 1), in: dumpStr),
-                       let d = Int32(dumpStr[r]) {
-                        editDate = d
-                    }
-                }
-                if editDate == nil {
-                    editDate = 1
-                }
-            }
         }
     }
 
@@ -457,11 +448,17 @@ class TLParser: NSObject {
         inspectNode(node, editDate: &editDate, origDate: &origDate, currentText: &currentText, msgId: &msgIdVal)
         let finalId = msgIdVal ?? getMessageIdFromNode(node)?.int32Value
 
-        let hasEditAttr = (editDate != nil) || (String(describing: node).contains("EditedMessageAttribute"))
-        let hasEditView = checkViewsForEditedText(node)
+        let hasEditAttr = (editDate != nil)
         let isKnownEdited = (finalId != nil && isEdited(NSNumber(value: finalId!)))
 
-        if hasEditAttr || hasEditView || isKnownEdited {
+        if hasEditAttr || isKnownEdited {
+            if let id = finalId, let cur = currentText, !cur.isEmpty {
+                recordEditedMessage(id: id, newText: cur)
+            }
+            return true
+        }
+
+        if checkViewsForEditedText(node) {
             if let id = finalId, let cur = currentText, !cur.isEmpty {
                 recordEditedMessage(id: id, newText: cur)
             }
@@ -473,6 +470,7 @@ class TLParser: NSObject {
             recordOriginalMessage(id: id, text: cur, date: origDate)
         }
         return false
+    }
     }
 
     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
@@ -635,44 +633,12 @@ class TLParser: NSObject {
         }
     }
 
-    /// Dynamically extracts message.id.id from a ChatMessageItem using string description parsing.
-    /// This is safer than Mirror because it bypasses computed properties and layout differences.
+    /// Dynamically extracts message.id.id from a ChatMessageItem using Mirror reflection first,
+    /// then precompiled regex fallback if needed.
     @objc static func getMessageId(from item: Any) -> NSNumber? {
         let unwrapped = unwrapOptional(item)
-        let description = String(describing: unwrapped)
         
-        let pattern = "MessageId\\(peerId: [^,]+, namespace: [^,]+, id: (\\d+)\\)"
-        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-            let nsRange = NSRange(description.startIndex..<description.endIndex, in: description)
-            if let match = regex.firstMatch(in: description, options: [], range: nsRange) {
-                if let idRange = Range(match.range(at: 1), in: description), let id = Int32(description[idRange]) {
-                    return NSNumber(value: id)
-                }
-            }
-        }
-        
-        // NEW PATTERN: Matches "id: 0:id(rawValue: 8310923053):0_11639"
-        let rawValuePattern = "rawValue: \\d+\\):\\d+_(\\d+)"
-        if let regex = try? NSRegularExpression(pattern: rawValuePattern, options: []) {
-            let nsRange = NSRange(description.startIndex..<description.endIndex, in: description)
-            if let match = regex.firstMatch(in: description, options: [], range: nsRange) {
-                if let idRange = Range(match.range(at: 1), in: description), let id = Int32(description[idRange]) {
-                    return NSNumber(value: id)
-                }
-            }
-        }
-        
-        let fallbackPattern = "messageId: (\\d+)"
-        if let regex = try? NSRegularExpression(pattern: fallbackPattern, options: []) {
-            let nsRange = NSRange(description.startIndex..<description.endIndex, in: description)
-            if let match = regex.firstMatch(in: description, options: [], range: nsRange) {
-                if let idRange = Range(match.range(at: 1), in: description), let id = Int32(description[idRange]) {
-                    return NSNumber(value: id)
-                }
-            }
-        }
-        
-        // Also try standard mirror reflection
+        // 1. Fast path: standard mirror reflection (sub-microsecond, zero string allocations)
         let mirror = Mirror(reflecting: unwrapped)
         for child in mirror.children {
             if child.label == "message" || child.label == "firstMessage" || child.label == "content" {
@@ -687,29 +653,41 @@ class TLParser: NSObject {
                 if let id = extractId(fromMessage: unwrapOptional(child.value)) { return id }
             }
         }
+
+        // 2. Fallback: string description regex using precompiled regexes
+        let description = String(describing: unwrapped)
+        let nsRange = NSRange(description.startIndex..<description.endIndex, in: description)
         
-        // Safe shallow dump. Limits depth to 5 to completely avoid the infinite recursion lag,
-        // but goes deep enough to print the MessageId which is usually at depth 1 to 4.
-        var dumpStr = ""
-        dump(unwrapped, to: &dumpStr, maxDepth: 5, maxItems: 200)
-        
-        let dumpPattern = "MessageId.*?id: (\\d+)"
-        if let regex = try? NSRegularExpression(pattern: dumpPattern, options: [.dotMatchesLineSeparators]) {
-            let nsRange = NSRange(dumpStr.startIndex..<dumpStr.endIndex, in: dumpStr)
-            if let match = regex.firstMatch(in: dumpStr, options: [], range: nsRange) {
-                if let idRange = Range(match.range(at: 1), in: dumpStr), let id = Int32(dumpStr[idRange]) {
-                    return NSNumber(value: id)
-                }
+        if let regex = messageIdRegex, let match = regex.firstMatch(in: description, options: [], range: nsRange) {
+            if let idRange = Range(match.range(at: 1), in: description), let id = Int32(description[idRange]) {
+                return NSNumber(value: id)
             }
         }
         
-        let dumpRawValuePattern = "rawValue: \\d+\\):\\d+_(\\d+)"
-        if let regex = try? NSRegularExpression(pattern: dumpRawValuePattern, options: []) {
-            let nsRange = NSRange(dumpStr.startIndex..<dumpStr.endIndex, in: dumpStr)
-            if let match = regex.firstMatch(in: dumpStr, options: [], range: nsRange) {
-                if let idRange = Range(match.range(at: 1), in: dumpStr), let id = Int32(dumpStr[idRange]) {
-                    return NSNumber(value: id)
-                }
+        if let regex = rawValueRegex, let match = regex.firstMatch(in: description, options: [], range: nsRange) {
+            if let idRange = Range(match.range(at: 1), in: description), let id = Int32(description[idRange]) {
+                return NSNumber(value: id)
+            }
+        }
+        
+        if let regex = fallbackRegex, let match = regex.firstMatch(in: description, options: [], range: nsRange) {
+            if let idRange = Range(match.range(at: 1), in: description), let id = Int32(description[idRange]) {
+                return NSNumber(value: id)
+            }
+        }
+        
+        // 3. Last-resort fallback: shallow dump
+        var dumpStr = ""
+        dump(unwrapped, to: &dumpStr, maxDepth: 4, maxItems: 100)
+        let dumpRange = NSRange(dumpStr.startIndex..<dumpStr.endIndex, in: dumpStr)
+        if let regex = dumpPatternRegex, let match = regex.firstMatch(in: dumpStr, options: [], range: dumpRange) {
+            if let idRange = Range(match.range(at: 1), in: dumpStr), let id = Int32(dumpStr[idRange]) {
+                return NSNumber(value: id)
+            }
+        }
+        if let regex = dumpRawValueRegex, let match = regex.firstMatch(in: dumpStr, options: [], range: dumpRange) {
+            if let idRange = Range(match.range(at: 1), in: dumpStr), let id = Int32(dumpStr[idRange]) {
+                return NSNumber(value: id)
             }
         }
         
@@ -750,31 +728,26 @@ class TLParser: NSObject {
         var m: Mirror? = Mirror(reflecting: node)
         while let mirror = m {
             for child in mirror.children {
-                if let id = getMessageId(from: child.value) {
-                    return id
+                let lbl = child.label ?? ""
+                if lbl != "appliedItem" && lbl != "item" && lbl != "currentInputParams" && lbl != "view" && lbl != "subnodes" {
+                    if let id = getMessageId(from: child.value) {
+                        return id
+                    }
                 }
             }
             m = mirror.superclassMirror
         }
         
         let nodeDesc = String(describing: node)
-        let pattern = "MessageId\\(peerId: [^,]+, namespace: [^,]+, id: (\\d+)\\)"
-        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-            let nsRange = NSRange(nodeDesc.startIndex..<nodeDesc.endIndex, in: nodeDesc)
-            if let match = regex.firstMatch(in: nodeDesc, options: [], range: nsRange) {
-                if let idRange = Range(match.range(at: 1), in: nodeDesc), let id = Int32(nodeDesc[idRange]) {
-                    return NSNumber(value: id)
-                }
+        let nsRange = NSRange(nodeDesc.startIndex..<nodeDesc.endIndex, in: nodeDesc)
+        if let regex = messageIdRegex, let match = regex.firstMatch(in: nodeDesc, options: [], range: nsRange) {
+            if let idRange = Range(match.range(at: 1), in: nodeDesc), let id = Int32(nodeDesc[idRange]) {
+                return NSNumber(value: id)
             }
         }
-        
-        let fallbackPattern = "messageId: (\\d+)"
-        if let regex = try? NSRegularExpression(pattern: fallbackPattern, options: []) {
-            let nsRange = NSRange(nodeDesc.startIndex..<nodeDesc.endIndex, in: nodeDesc)
-            if let match = regex.firstMatch(in: nodeDesc, options: [], range: nsRange) {
-                if let idRange = Range(match.range(at: 1), in: nodeDesc), let id = Int32(nodeDesc[idRange]) {
-                    return NSNumber(value: id)
-                }
+        if let regex = fallbackRegex, let match = regex.firstMatch(in: nodeDesc, options: [], range: nsRange) {
+            if let idRange = Range(match.range(at: 1), in: nodeDesc), let id = Int32(nodeDesc[idRange]) {
+                return NSNumber(value: id)
             }
         }
         

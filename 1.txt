@@ -1,0 +1,22 @@
+и еще вот у нас есть раздел Ghost Mode
+сделай так чтобы было только 2 вкладки
+Hide Online Status -- Always appear offline
+Hide Typing Status -- Don’t show when you’re typing
+и 3 вкладка Other Activities будет как у нас внизу Select Location
+и там уже внутри будет остальное все
+Hide Video Recording — Hide when recording a video
+Hide Video Uploading — Hide when uploading a video
+Hide Voice Recording — Hide when recording a voice message
+Hide Voice Uploading — Hide when uploading a voice message
+Hide Photo Uploading — Hide when uploading a photo
+Hide File Uploading — Hide when uploading a file
+Hide Round Video Recording — Hide when recording a round video
+Hide Round Video Uploading — Hide when uploading a round video
+Hide Location Selecting — Hide when choosing a location
+Hide Contact Selecting — Hide when choosing a contact
+Hide Sticker Selecting — Hide when choosing a sticker
+Hide Playing Game — Hide when playing a game
+Hide Speaking in Group Call — Hide when speaking in a group call
+Hide Emoji Interaction — Hide emoji interactions
+Hide Emoji Reaction — Hide emoji reactions
+и да, переименуй наши функции чтобы как тут было (--) это типо просто пробел.

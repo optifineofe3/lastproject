@@ -116,7 +116,7 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
 	switch (section) {
 		case GHOST_MODE:
-		   return 17;
+		   return 3;
 		case READ_RECEIPT:
 		   return 2;
 		case MISC:
@@ -169,97 +169,56 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
     UITableViewCell *cell;
 
 	if (indexPath.section == 0) { // Ghost Mode
-		cell = [self switchCellFromTableView:tableView];
-		cell.imageView.image = nil;
+		if (indexPath.row == 0) {
+			cell = [self switchCellFromTableView:tableView];
+			cell.imageView.image = nil;
+			cell.textLabel.text = TGLoc(@"DISABLE_ONLINE_STATUS_TITLE");
+			cell.detailTextLabel.text = TGLoc(@"DISABLE_ONLINE_STATUS_SUBTITLE");
 
-		switch (indexPath.row) {
-			case 0:
-			    cell.textLabel.text = TGLoc(@"DISABLE_ONLINE_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_ONLINE_STATUS_SUBTITLE");
-				break;
-			case 1:
-			    cell.textLabel.text = TGLoc(@"DISABLE_TYPING_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_TYPING_STATUS_SUBTITLE");
-				break;
-			case 2:
-			    cell.textLabel.text = TGLoc(@"DISABLE_RECORDING_VIDEO_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_RECORDING_VIDEO_STATUS_SUBTITLE");
-				break;
-			case 3:
-			    cell.textLabel.text = TGLoc(@"DISABLE_UPLOADING_VIDEO_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_UPLOADING_VIDEO_STATUS_SUBTITLE");
-				break;
-			case 4:
-			    cell.textLabel.text = TGLoc(@"DISABLE_VC_MESSAGE_RECORDING_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_VC_MESSAGE_RECORDING_STATUS_SUBTITLE");
-				break;
-			case 5:
-			    cell.textLabel.text = TGLoc(@"DISABLE_VC_MESSAGE_UPLOADING_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_VC_MESSAGE_UPLOADING_STATUS_SUBTITLE");
-				break;
-			case 6:
-			    cell.textLabel.text = TGLoc(@"DISABLE_UPLOADING_PHOTO_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_UPLOADING_PHOTO_STATUS_SUBTITLE");
-				break;
-			case 7:
-			    cell.textLabel.text = TGLoc(@"DISABLE_UPLOADING_FILE_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_UPLOADING_FILE_STATUS_SUBTITLE");
-				break;
-			case 8:
-			    cell.textLabel.text = TGLoc(@"DISABLE_CHOOSING_LOCATION_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_CHOOSING_LOCATION_STATUS_SUBTITLE");
-				break;
-			case 9:
-			    cell.textLabel.text = TGLoc(@"DISABLE_CHOOSING_CONTACT_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_CHOOSING_CONTACT_SUBTITLE");
-				break;
-			case 10:
-			    cell.textLabel.text = TGLoc(@"DISABLE_PLAYING_GAME_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_PLAYING_GAME_STATUS_SUBTITLE");
-				break;
-			case 11:
-			    cell.textLabel.text = TGLoc(@"DISABLE_RECORDING_ROUND_VIDEO_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_RECORDING_ROUND_VIDEO_STATUS_SUBTITLE");
-				break;
-			case 12:
-			    cell.textLabel.text = TGLoc(@"DISABLE_UPLOADING_ROUND_VIDEO_STATUS_TITLE");
-				cell.detailTextLabel.text = nil;
-				break;
-			case 13:
-			    cell.textLabel.text = TGLoc(@"DISABLE_SPEAKING_IN_GROUP_CALL_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_SPEAKING_IN_GROUP_CALL_STATUS_SUBTITLE");
-				break;
-			case 14:
-			    cell.textLabel.text = TGLoc(@"DISABLE_CHOOSING_STICKER_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_CHOOSING_STICKER_STATUS_SUBTITLE");
-				break;
-			case 15:
-			    cell.textLabel.text = TGLoc(@"DISABLE_EMOJI_INTERACTION_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_EMOJI_INTERACTION_STATUS_SUBTITLE");
-				break;
-			case 16:
-			    cell.textLabel.text = TGLoc(@"DISABLE_EMOJI_ACKNOWLEDGEMENT_STATUS_TITLE");
-				cell.detailTextLabel.text = TGLoc(@"DISABLE_EMOJI_ACKNOWLEDGEMENT_STATUS_SUBTITLE");
-				break;
-			default:
-			    break;
+			UISwitch *toggle = (UISwitch *)cell.accessoryView;
+			if (!toggle || ![toggle isKindOfClass:[UISwitch class]]) {
+				toggle = [[UISwitch alloc] init];
+			}
+			toggle.onTintColor = [UIColor systemBlueColor];
+			toggle.on = [[NSUserDefaults standardUserDefaults] boolForKey:kDisableOnlineStatus];
+			[toggle addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
+			toggle.tag = 1000 + (indexPath.section * 1000) + indexPath.row;
+			cell.accessoryView = toggle;
+
+			cell.textLabel.numberOfLines = 0;
+			cell.detailTextLabel.numberOfLines = 0;
+			return cell;
+		} else if (indexPath.row == 1) {
+			cell = [self switchCellFromTableView:tableView];
+			cell.imageView.image = nil;
+			cell.textLabel.text = TGLoc(@"DISABLE_TYPING_STATUS_TITLE");
+			cell.detailTextLabel.text = TGLoc(@"DISABLE_TYPING_STATUS_SUBTITLE");
+
+			UISwitch *toggle = (UISwitch *)cell.accessoryView;
+			if (!toggle || ![toggle isKindOfClass:[UISwitch class]]) {
+				toggle = [[UISwitch alloc] init];
+			}
+			toggle.onTintColor = [UIColor systemBlueColor];
+			toggle.on = [[NSUserDefaults standardUserDefaults] boolForKey:kDisableTypingStatus];
+			[toggle addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
+			toggle.tag = 1000 + (indexPath.section * 1000) + indexPath.row;
+			cell.accessoryView = toggle;
+
+			cell.textLabel.numberOfLines = 0;
+			cell.detailTextLabel.numberOfLines = 0;
+			return cell;
+		} else if (indexPath.row == 2) {
+			cell = [self normalCellFromTableView:tableView];
+			cell.imageView.image = nil;
+			cell.textLabel.text = TGLoc(@"OTHER_ACTIVITIES_TITLE");
+			cell.detailTextLabel.text = nil;
+			cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+			cell.accessoryView = nil;
+
+			cell.textLabel.numberOfLines = 0;
+			cell.detailTextLabel.numberOfLines = 0;
+			return cell;
 		}
-
-		UISwitch *toggle = (UISwitch *)cell.accessoryView;
-		if (!toggle || ![toggle isKindOfClass:[UISwitch class]]) {
-			toggle = [[UISwitch alloc] init];
-		}
-		toggle.onTintColor = [UIColor systemBlueColor];
-
-		NSString *switchKey = [self switchKeyForIndexPath:indexPath];
-		toggle.on = [[NSUserDefaults standardUserDefaults] boolForKey:switchKey];
-		[toggle addTarget:self action:@selector(switchChanged:) forControlEvents:UIControlEventValueChanged];
-		toggle.tag = 1000 + (indexPath.section * 1000) + indexPath.row;
-		cell.accessoryView = toggle;
-
-		cell.textLabel.numberOfLines = 0;
-		cell.detailTextLabel.numberOfLines = 0;
-		return cell;
 	}
 	else if (indexPath.section == 1) { // Read Receipt
 		cell = [self switchCellFromTableView:tableView];
@@ -450,6 +409,12 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
+	if (indexPath.section == GHOST_MODE) {
+		if (indexPath.row == 2) {
+			[self showOtherActivities];
+		}
+	}
+
 	if (indexPath.section == FILE_FIXER) {
 		if (indexPath.row == 1) {
 			[self clearFilePickerFixCache];
@@ -483,21 +448,6 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
             switch (indexPath.row) {
                 case 0: return kDisableOnlineStatus;
                 case 1: return kDisableTypingStatus;
-                case 2: return kDisableRecordingVideoStatus;
-                case 3: return kDisableUploadingVideoStatus;
-                case 4: return kDisableRecordingVoiceStatus;
-                case 5: return kDisableUploadingVoiceStatus;
-                case 6: return kDisableUploadingPhotoStatus;
-                case 7: return kDisableUploadingFileStatus;
-                case 8: return kDisableChoosingLocationStatus;
-                case 9: return kDisableChoosingContactStatus;
-                case 10: return kDisablePlayingGameStatus;
-                case 11: return kDisableRecordingRoundVideoStatus;
-                case 12: return kDisableUploadingRoundVideoStatus;
-                case 13: return kDisableSpeakingInGroupCallStatus;
-                case 14: return kDisableChoosingStickerStatus;
-                case 15: return kDisableEmojiInteractionStatus;
-                case 16: return kDisableEmojiAcknowledgementStatus;
                 default: return nil;
             }
         case 1:
@@ -557,6 +507,16 @@ typedef NS_ENUM(NSInteger, TABLE_VIEW_SECTIONS) {
         formattedSize = [NSString stringWithFormat:@"%.2f MB", totalSize / (1024.0 * 1024.0)];
     }
 	return formattedSize;
+}
+
+- (void)showOtherActivities {
+	TGOtherActivities *ui = [TGOtherActivities new];
+	if (self.navigationController) {
+		[self.navigationController pushViewController:ui animated:YES];
+	} else {
+		UINavigationController *navVC = [[UINavigationController alloc] initWithRootViewController:ui];
+		[self presentViewController:navVC animated:YES completion:nil];
+	}
 }
 
 - (void)showLocationSelector {
