@@ -1954,10 +1954,6 @@ class TLParser: NSObject {
         return findMediaFilePath(fromTarget: target, isVideoOnly: false)
     }
 
-    @objc static func findMediaFilePath(fromTarget target: Any?) -> String? {
-        return findMediaFilePath(fromTarget: target, isVideoOnly: false)
-    }
-
     private static func findMediaFilePath(fromTarget target: Any?, isVideoOnly: Bool) -> String? {
         guard let target = target else {
             customLogMsg("[TLParser] findMediaFilePath: target is nil")
