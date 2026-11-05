@@ -5,10 +5,6 @@
 #import "MediaSaver.h"
 #import <os/lock.h>
 
-@interface UIView (AsyncDisplayKit)
-- (id)asyncdisplaykit_node;
-@end
-
 // Menu Open
 @interface ASDisplayNode : NSObject
 @property (atomic, assign, readwrite) CGRect frame;

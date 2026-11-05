@@ -6,10 +6,6 @@
 #import <roothide.h>
 #import "../Constants.h"
 
-@interface UIView (AsyncDisplayKit)
-- (id)asyncdisplaykit_node;
-@end
-
 @interface TGExtra : UIViewController <UITableViewDataSource, UITableViewDelegate>
 @end
 

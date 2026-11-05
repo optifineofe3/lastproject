@@ -12,10 +12,6 @@
 #import <pthread.h>
 #import <dlfcn.h>
 
-@interface UIView (AsyncDisplayKit)
-- (id)asyncdisplaykit_node;
-@end
-
 @interface MediaSaverButton : UIButton
 @property (nonatomic, weak) UIViewController *targetController;
 @property (nonatomic, weak) id targetNode;
