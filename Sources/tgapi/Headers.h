@@ -3,6 +3,10 @@
 #import "Logger/Logger.h"
 #import "Constants.h"
 
+@interface UIView (AsyncDisplayKit)
+- (id)asyncdisplaykit_node;
+@end
+
 @interface TLParser : NSObject
 + (NSData *)handleResponse:(NSData *)data functionID:(NSNumber *)ios;
 + (void)addDeletedId:(int32_t)msgId;

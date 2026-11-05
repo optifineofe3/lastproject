@@ -5,6 +5,10 @@
 #import "MediaSaver.h"
 #import <os/lock.h>
 
+@interface UIView (AsyncDisplayKit)
+- (id)asyncdisplaykit_node;
+@end
+
 // Menu Open
 @interface ASDisplayNode : NSObject
 @property (atomic, assign, readwrite) CGRect frame;
@@ -691,7 +695,7 @@ static void updateVisibleBadgesForChangedIds(NSArray *changedIds) {
 
         ASDisplayNode *node = nil;
         if ([v respondsToSelector:@selector(asyncdisplaykit_node)]) {
-            node = [(id)v asyncdisplaykit_node];
+            node = (ASDisplayNode *)[v asyncdisplaykit_node];
         }
         if (node && isMainMessageNode(node)) {
             NSNumber *mid = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];

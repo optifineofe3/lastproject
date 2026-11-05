@@ -12,6 +12,10 @@
 #import <pthread.h>
 #import <dlfcn.h>
 
+@interface UIView (AsyncDisplayKit)
+- (id)asyncdisplaykit_node;
+@end
+
 @interface MediaSaverButton : UIButton
 @property (nonatomic, weak) UIViewController *targetController;
 @property (nonatomic, weak) id targetNode;
@@ -1990,7 +1994,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
 
     id node = nil;
     if ([v respondsToSelector:@selector(asyncdisplaykit_node)]) {
-        node = [(id)v asyncdisplaykit_node];
+        node = [v asyncdisplaykit_node];
     }
     if (!node) {
         node = objc_getAssociatedObject(v, "TweakMessageNode");
@@ -2046,7 +2050,7 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
     id node = nil;
     UIView *pv = badge.superview;
     if (pv && [pv respondsToSelector:@selector(asyncdisplaykit_node)]) {
-        node = [(id)pv asyncdisplaykit_node];
+        node = [pv asyncdisplaykit_node];
     }
     if (!node) {
         node = objc_getAssociatedObject(badge, "TweakBadgeNode");
