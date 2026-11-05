@@ -311,6 +311,7 @@ static inline BOOL isMainMessageNode(ASDisplayNode *node) {
         ![className containsString:@"TodoItemNode"]) {
         if ([className containsString:@"BubbleItemNode"] ||
             [className containsString:@"ChatMessageItemView"] ||
+            [className containsString:@"ChatMessageItemNode"] ||
             [className containsString:@"AnimatedStickerItemNode"] ||
             [className containsString:@"StickerItemNode"] ||
             [className containsString:@"InstantVideoItemNode"]) {
@@ -412,20 +413,21 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     objc_setAssociatedObject(v, "TweakMessageNode", node, OBJC_ASSOCIATION_ASSIGN);
 
     // Node-level caching for message info:
-    // If already inspected and found to be non-message or invalid, cached is [NSNull null] -> instant exit!
-    id cachedInfo = objc_getAssociatedObject(node, "TweakMsgInfo");
-    if (cachedInfo == [NSNull null]) return;
-
     NSDictionary *info = nil;
+    id cachedInfo = objc_getAssociatedObject(node, "TweakMsgInfo");
     if ([cachedInfo isKindOfClass:[NSDictionary class]]) {
         info = (NSDictionary *)cachedInfo;
     } else {
         info = [NSClassFromString(@"TLParser") getMessageInfoFromNode:node];
-        if (!info) {
-            objc_setAssociatedObject(node, "TweakMsgInfo", [NSNull null], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            return;
+        if (!info || !info[@"msgId"]) {
+            NSNumber *fbId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
+            if (fbId) {
+                info = @{ @"msgId": fbId, @"peerId": @(0), @"isOutgoing": @(NO), @"text": @"" };
+            }
         }
-        objc_setAssociatedObject(node, "TweakMsgInfo", info, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (info && info[@"msgId"]) {
+            objc_setAssociatedObject(node, "TweakMsgInfo", info, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
     }
 
     NSNumber *msgId = info[@"msgId"];
@@ -433,7 +435,8 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     NSString *text = info[@"text"];
     BOOL isOutgoingFromInfo = [info[@"isOutgoing"] boolValue];
 
-    BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeletedWithMsgId:msgId peerId:peerId]);
+    BOOL isDel = (msgId != nil && ([NSClassFromString(@"TLParser") isDeletedWithMsgId:msgId peerId:peerId] ||
+                                   [NSClassFromString(@"TLParser") isDeleted:msgId]));
     BOOL isEdit = (msgId != nil && [NSClassFromString(@"TLParser") isEditedWithMsgId:msgId peerId:peerId currentText:text]);
 
     // FAST PATH: Unedited and undeleted message (99.9% of messages during scrolling)
@@ -679,6 +682,7 @@ static void refreshDeletedBadgesInView(UIView *view) {
     if (node) {
         objc_setAssociatedObject(node, "TweakIsEdit", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(node, "TweakMsgInfo", nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        updateDeletedBadgeForNode(node);
     }
     NSString *className = NSStringFromClass([view class]);
     if ([className containsString:@"ChatMessage"]) {

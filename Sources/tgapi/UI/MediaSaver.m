@@ -713,13 +713,36 @@ static BOOL isControllerDisplayingVideo(UIViewController *controller) {
     return NO;
 }
 
+static BOOL isPlaceholderViewOrLayer(id item) {
+    if (!item) return NO;
+    NSString *name = NSStringFromClass([item class]);
+    if ([name containsString:@"Placeholder"]) return YES;
+    if ([name containsString:@"RadialStatus"]) return YES;
+    if ([name containsString:@"Activity"]) return YES;
+    if ([name containsString:@"MediaSaver"]) return YES;
+    if ([name containsString:@"Header"]) return YES;
+    if ([name containsString:@"Footer"]) return YES;
+    if ([name containsString:@"Button"]) return YES;
+    if ([name containsString:@"Dust"]) return YES;
+    if ([item isKindOfClass:[CALayer class]]) {
+        NSString *lName = [((CALayer *)item) name];
+        if (lName && ([lName containsString:@"placeholder"] || [lName containsString:@"shimmer"] || [lName containsString:@"status"])) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img), void (^checkLayerContents)(CGImageRef cg)) {
     if (!view || view.hidden || view.alpha < 0.05) return;
+    if (isPlaceholderViewOrLayer(view)) return;
     @try {
         if (isViewVisibleInWindow(view)) {
             id contents = view.layer.contents;
             if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
-                checkLayerContents((__bridge CGImageRef)contents);
+                if (!isPlaceholderViewOrLayer(view.layer)) {
+                    checkLayerContents((__bridge CGImageRef)contents);
+                }
             }
             
             if ([view isKindOfClass:[UIImageView class]]) {
@@ -745,6 +768,7 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
             }
             
             for (CALayer *sublayer in view.layer.sublayers) {
+                if (isPlaceholderViewOrLayer(sublayer)) continue;
                 id subDel = sublayer.delegate;
                 if ([subDel isKindOfClass:[UIImageView class]]) {
                     checkImage([(UIImageView *)subDel image]);
@@ -754,6 +778,7 @@ static void scanViewsRecursively(UIView *view, void (^checkImage)(UIImage *img),
                     checkLayerContents((__bridge CGImageRef)subContents);
                 }
                 for (CALayer *subSublayer in sublayer.sublayers) {
+                    if (isPlaceholderViewOrLayer(subSublayer)) continue;
                     id ssDel = subSublayer.delegate;
                     if ([ssDel isKindOfClass:[UIImageView class]]) {
                         checkImage([(UIImageView *)ssDel image]);
@@ -1513,40 +1538,165 @@ static NSString *extractPathFromPlayerLayer(CALayer *layer) {
         return;
     }
     
-    UIView *targetView = nil;
-    if (centralNode) {
-        id v = safeInvokeGetter(centralNode, @"view");
-        if (v && [v isKindOfClass:[UIView class]]) {
-            targetView = (UIView *)v;
-        }
-    }
-    if (!targetView && controller.isViewLoaded) {
-        targetView = controller.view;
-    }
-    
-    if (targetView) {
-        UIImage *image = [self findImageInView:targetView];
-        if (image) {
-            [self saveImageToPhotos:image];
-            return;
-        }
-        
-        if (controller.isViewLoaded && targetView != controller.view) {
-            image = [self findImageInView:controller.view];
-            if (image) {
-                [self saveImageToPhotos:image];
+    // Photo item: delegate to dedicated safe photo downloader (never saves placeholders)
+    [self savePhotoFromTarget:centralNode controller:controller];
+}
+
++ (void)savePhotoFromTarget:(id)target controller:(UIViewController *)controller {
+    // 1. Try finding complete photo file on disk first (highest quality, original)
+    id targetObj = target ?: controller;
+    NSString *filePath = [NSClassFromString(@"TLParser") findMediaFilePathFromTarget:targetObj];
+    if (filePath && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+        NSData *data = [NSData dataWithContentsOfFile:filePath options:NSDataReadingMappedIfSafe error:nil];
+        if (data && data.length >= 1024) {
+            UIImage *diskImage = [UIImage imageWithData:data];
+            if (diskImage && diskImage.size.width >= 100 && diskImage.size.height >= 100) {
+                customLog2(@"[MediaSaver] savePhotoFromTarget: found complete photo on disk: %@ (%lu bytes)", filePath, (unsigned long)data.length);
+                [self saveImageToPhotos:diskImage];
                 return;
             }
         }
-        
-        UIImage *snapshot = [self snapshotView:targetView];
-        if (snapshot) {
-            [self saveImageToPhotos:snapshot];
+    }
+
+    // 2. Try extracting UIImage directly from centralNode's imageNode
+    if (target) {
+        id imgNode = safeInvokeGetter(target, @"imageNode");
+        if (!imgNode) {
+            Ivar ivar = class_getInstanceVariable([target class], "imageNode");
+            if (ivar) imgNode = object_getIvar(target, ivar);
+        }
+        if (imgNode) {
+            UIImage *img = safeInvokeGetter(imgNode, @"image");
+            if (img && img.size.width >= 100 && img.size.height >= 100) {
+                customLog2(@"[MediaSaver] savePhotoFromTarget: found image directly on imageNode: %f x %f", img.size.width, img.size.height);
+                [self saveImageToPhotos:img];
+                return;
+            }
+            id contents = safeInvokeGetter(imgNode, @"contents");
+            if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
+                CGImageRef cg = (__bridge CGImageRef)contents;
+                if (CGImageGetWidth(cg) >= 100 && CGImageGetHeight(cg) >= 100) {
+                    UIImage *cgImg = [UIImage imageWithCGImage:cg scale:[UIScreen mainScreen].scale orientation:UIImageOrientationUp];
+                    if (cgImg) {
+                        customLog2(@"[MediaSaver] savePhotoFromTarget: found image on imageNode.contents: %f x %f", cgImg.size.width, cgImg.size.height);
+                        [self saveImageToPhotos:cgImg];
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Try finding non-placeholder image in view hierarchy
+    UIView *targetView = nil;
+    if (target) {
+        id v = safeInvokeGetter(target, @"view");
+        if (v && [v isKindOfClass:[UIView class]]) targetView = (UIView *)v;
+    }
+    if (!targetView && controller.isViewLoaded) targetView = controller.view;
+
+    if (targetView) {
+        UIImage *viewImage = [self findImageInView:targetView];
+        if (viewImage && viewImage.size.width >= 100 && viewImage.size.height >= 100) {
+            customLog2(@"[MediaSaver] savePhotoFromTarget: found non-placeholder image in view: %f x %f", viewImage.size.width, viewImage.size.height);
+            [self saveImageToPhotos:viewImage];
             return;
         }
     }
-    
-    [self showToast:@"Unable to save media" success:NO];
+
+    // 4. Photo is not yet downloaded or rendered! Trigger fetch if possible and poll until ready
+    customLog2(@"[MediaSaver] Photo not ready yet, initiating download and polling...");
+    if (target && [target respondsToSelector:NSSelectorFromString(@"statusPressed")]) {
+        @try {
+            [target performSelector:NSSelectorFromString(@"statusPressed")];
+        } @catch (...) {}
+    }
+
+    [self startDownloadingAndSaveGalleryPhotoForTarget:target controller:controller];
+}
+
++ (void)startDownloadingAndSaveGalleryPhotoForTarget:(id)target controller:(UIViewController *)controller {
+    static int activePhotoDownloadSession = 0;
+    activePhotoDownloadSession++;
+    int currentSession = activePhotoDownloadSession;
+
+    [self showToast:@"Downloading photo, please wait..." success:YES];
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        int maxAttempts = 20; // 20 * 0.5s = 10s
+        for (int i = 1; i <= maxAttempts; i++) {
+            [NSThread sleepForTimeInterval:0.5];
+
+            if (currentSession != activePhotoDownloadSession) {
+                return;
+            }
+
+            // Check disk file
+            id targetObj = target ?: controller;
+            NSString *filePath = [NSClassFromString(@"TLParser") findMediaFilePathFromTarget:targetObj];
+            if (filePath && [[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
+                NSData *data = [NSData dataWithContentsOfFile:filePath options:NSDataReadingMappedIfSafe error:nil];
+                if (data && data.length >= 1024) {
+                    UIImage *diskImage = [UIImage imageWithData:data];
+                    if (diskImage && diskImage.size.width >= 100 && diskImage.size.height >= 100) {
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            [MediaSaver saveImageToPhotos:diskImage];
+                        });
+                        return;
+                    }
+                }
+            }
+
+            // Check imageNode on main thread
+            __block UIImage *foundImage = nil;
+            dispatch_sync(dispatch_get_main_queue(), ^{
+                if (target) {
+                    id imgNode = safeInvokeGetter(target, @"imageNode");
+                    if (!imgNode) {
+                        Ivar ivar = class_getInstanceVariable([target class], "imageNode");
+                        if (ivar) imgNode = object_getIvar(target, ivar);
+                    }
+                    if (imgNode) {
+                        UIImage *img = safeInvokeGetter(imgNode, @"image");
+                        if (img && img.size.width >= 100 && img.size.height >= 100) {
+                            foundImage = img;
+                        } else {
+                            id contents = safeInvokeGetter(imgNode, @"contents");
+                            if (contents && CFGetTypeID((__bridge CFTypeRef)contents) == CGImageGetTypeID()) {
+                                CGImageRef cg = (__bridge CGImageRef)contents;
+                                if (CGImageGetWidth(cg) >= 100 && CGImageGetHeight(cg) >= 100) {
+                                    UIImage *cgImg = [UIImage imageWithCGImage:cg scale:[UIScreen mainScreen].scale orientation:UIImageOrientationUp];
+                                    if (cgImg) foundImage = cgImg;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!foundImage) {
+                    UIView *tv = [target isKindOfClass:[UIView class]] ? (UIView *)target : (controller.isViewLoaded ? controller.view : nil);
+                    if (tv) {
+                        UIImage *vi = [MediaSaver findImageInView:tv];
+                        if (vi && vi.size.width >= 100 && vi.size.height >= 100) {
+                            foundImage = vi;
+                        }
+                    }
+                }
+            });
+
+            if (foundImage) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [MediaSaver saveImageToPhotos:foundImage];
+                });
+                return;
+            }
+        }
+
+        if (currentSession != activePhotoDownloadSession) return;
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [MediaSaver showToast:@"Photo download timed out. Try again" success:NO];
+        });
+    });
 }
 
 - (void)image:(UIImage *)image didFinishSavingWithError:(NSError *)error contextInfo:(void *)contextInfo {

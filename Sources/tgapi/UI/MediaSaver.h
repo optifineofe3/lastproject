@@ -22,6 +22,8 @@
 + (NSString *)findVideoPathForTarget:(id)target controller:(UIViewController *)controller;
 + (BOOL)isPathVideoPlayable:(NSString *)path;
 + (void)startDownloadingAndSaveStoryVideoForTarget:(id)target controller:(UIViewController *)controller;
++ (void)savePhotoFromTarget:(id)target controller:(UIViewController *)controller;
++ (void)startDownloadingAndSaveGalleryPhotoForTarget:(id)target controller:(UIViewController *)controller;
 
 - (void)handleButtonTap:(id)sender;
 - (void)handleInstantVideoDoubleTap:(UITapGestureRecognizer *)gesture;

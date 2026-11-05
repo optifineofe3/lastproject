@@ -10,6 +10,7 @@ class TLParser: NSObject {
     // Keys are formatted as "\(channelId)_\(msgId)" for channel messages or "\(msgId)" for direct/group chats.
     private static let deletedQueue = DispatchQueue(label: "com.lead.deletedIds", attributes: .concurrent)
     private static var _deletedKeys = Set<String>()
+    private static var _deletedIds = Set<Int32>()
 
     private static let origTextsQueue = DispatchQueue(label: "com.lead.origTexts", attributes: .concurrent)
     private static var _originalTexts = [String: String]()
@@ -70,6 +71,7 @@ class TLParser: NSObject {
             try? FileManager.default.removeItem(at: dir.appendingPathComponent("orig_v2.json"))
 
             _deletedKeys.removeAll()
+            _deletedIds.removeAll()
             _editedOriginalTexts.removeAll()
             _editedKeys.removeAll()
             _originalTexts.removeAll()
@@ -82,6 +84,11 @@ class TLParser: NSObject {
         if let data = try? Data(contentsOf: delURL),
            let arr = try? JSONSerialization.jsonObject(with: data, options: []) as? [String] {
             _deletedKeys = Set(arr)
+            for k in _deletedKeys {
+                if let colon = k.split(separator: "_").last, let id = Int32(colon) {
+                    _deletedIds.insert(id)
+                }
+            }
         }
 
         let editURL = dir.appendingPathComponent("edited_v2.json")
@@ -170,11 +177,18 @@ class TLParser: NSObject {
 
     @objc static func addDeletedId(_ id: Int32, channelId: Int64) {
         guard id != 0 else { return }
-        let key = makeKey(msgId: id, peerId: channelId)
 
         deletedQueue.async(flags: .barrier) {
             loadDatabaseIfNeeded()
-            _deletedKeys.insert(key)
+            _deletedIds.insert(id)
+            _deletedKeys.insert("\(id)")
+            if channelId != 0 {
+                let normChannelId = abs(channelId) > 1000000000000 ? (abs(channelId) - 1000000000000) : abs(channelId)
+                _deletedKeys.insert("\(channelId)_\(id)")
+                _deletedKeys.insert("\(normChannelId)_\(id)")
+                _deletedKeys.insert("-\(normChannelId)_\(id)")
+                _deletedKeys.insert("-100\(normChannelId)_\(id)")
+            }
             saveDatabaseDebounced()
 
             DispatchQueue.main.async {
@@ -192,23 +206,40 @@ class TLParser: NSObject {
 
     @objc static func isDeletedWithMsgId(_ msgId: NSNumber?, peerId: NSNumber?) -> Bool {
         guard let m = msgId?.int32Value, m != 0 else { return false }
-        let p = peerId?.int64Value ?? 0
-        let key = makeKey(msgId: m, peerId: p)
-
         return deletedQueue.sync {
             loadDatabaseIfNeeded()
-            if _deletedKeys.contains(key) {
+            // 1. Direct msgId match (covers direct/group chats and fast lookup)
+            if _deletedKeys.contains("\(m)") || _deletedIds.contains(m) {
                 return true
             }
-            if p == 0 && _deletedKeys.contains("\(m)") {
-                return true
+            // 2. Scoped peerId match (exact and normalized peer formats)
+            if let p = peerId?.int64Value, p != 0 {
+                if _deletedKeys.contains("\(p)_\(m)") {
+                    return true
+                }
+                let normP = abs(p) > 1000000000000 ? (abs(p) - 1000000000000) : abs(p)
+                if _deletedKeys.contains("\(normP)_\(m)") || _deletedKeys.contains("-\(normP)_\(m)") || _deletedKeys.contains("-100\(normP)_\(m)") {
+                    return true
+                }
             }
             return false
         }
     }
 
     @objc static func isDeleted(_ msgId: NSNumber) -> Bool {
-        return isDeletedWithMsgId(msgId, peerId: nil)
+        guard let m = msgId.int32Value as Int32?, m != 0 else { return false }
+        return deletedQueue.sync {
+            loadDatabaseIfNeeded()
+            if _deletedKeys.contains("\(m)") || _deletedIds.contains(m) {
+                return true
+            }
+            for k in _deletedKeys {
+                if k == "\(m)" || k.hasSuffix("_\(m)") {
+                    return true
+                }
+            }
+            return false
+        }
     }
 
     @objc static func isEditedWithMsgId(_ msgId: NSNumber?, peerId: NSNumber?, currentText: NSString?) -> Bool {
@@ -765,39 +796,55 @@ class TLParser: NSObject {
                     if cChild.label == "firstMessage" || cChild.label == "message" {
                         rawMessage = cChild.value
                         break
+                    } else if cChild.label == "group" || cChild.label == "messages" {
+                        let groupMirror = Mirror(reflecting: unwrapOptional(cChild.value))
+                        if let firstGroupChild = groupMirror.children.first {
+                            let itemTupleMirror = Mirror(reflecting: unwrapOptional(firstGroupChild.value))
+                            if let firstElement = itemTupleMirror.children.first {
+                                rawMessage = firstElement.value
+                            }
+                        }
                     }
                 }
                 if rawMessage != nil { break }
             }
         }
 
-        guard let msg = rawMessage else { return nil }
-        let unwrappedMsg = unwrapOptional(msg)
-        let msgMirror = Mirror(reflecting: unwrappedMsg)
-
         var msgId: Int32?
         var peerId: Int64?
         var text: String?
         var isIncoming = false
 
-        for child in msgMirror.children {
-            let lbl = child.label ?? ""
-            if lbl == "id" {
-                let idMirror = Mirror(reflecting: unwrapOptional(child.value))
-                for idChild in idMirror.children {
-                    if idChild.label == "id", let idVal = idChild.value as? Int32 {
-                        msgId = idVal
-                    } else if idChild.label == "peerId" {
-                        peerId = extractId(fromPeerId: idChild.value)?.int64Value
+        if let msg = rawMessage {
+            let unwrappedMsg = unwrapOptional(msg)
+            let msgMirror = Mirror(reflecting: unwrappedMsg)
+
+            for child in msgMirror.children {
+                let lbl = child.label ?? ""
+                if lbl == "id" {
+                    let idMirror = Mirror(reflecting: unwrapOptional(child.value))
+                    for idChild in idMirror.children {
+                        if idChild.label == "id", let idVal = idChild.value as? Int32 {
+                            msgId = idVal
+                        } else if idChild.label == "peerId" {
+                            peerId = extractId(fromPeerId: idChild.value)?.int64Value
+                        }
+                    }
+                } else if lbl == "text", let t = child.value as? String {
+                    text = t
+                } else if lbl == "flags" {
+                    let flagsDesc = String(describing: child.value)
+                    if flagsDesc.contains("Incoming") || flagsDesc.contains("incoming") {
+                        isIncoming = true
                     }
                 }
-            } else if lbl == "text", let t = child.value as? String {
-                text = t
-            } else if lbl == "flags" {
-                let flagsDesc = String(describing: child.value)
-                if flagsDesc.contains("Incoming") || flagsDesc.contains("incoming") {
-                    isIncoming = true
-                }
+            }
+        }
+
+        // Robust fallback: if msgId is still nil, try getMessageId from unwrappedNode
+        if msgId == nil {
+            if let fallbackId = getMessageId(from: unwrappedNode) {
+                msgId = fallbackId.int32Value
             }
         }
 
@@ -901,21 +948,41 @@ class TLParser: NSObject {
     private static func extractId(fromPeerId pid: Any) -> NSNumber? {
         if let idVal = pid as? Int64 { return NSNumber(value: idVal) }
         if let idVal = pid as? Int32 { return NSNumber(value: Int64(idVal)) }
-        
+
+        // 1. Direct Mirror inspection of PeerId struct: properties 'namespace' and 'id'
+        let pidMirror = Mirror(reflecting: pid)
+        for pidChild in pidMirror.children {
+            if pidChild.label == "id" {
+                let idMirror = Mirror(reflecting: pidChild.value)
+                for idSubChild in idMirror.children {
+                    if idSubChild.label == "rawValue", let raw = idSubChild.value as? Int64 {
+                        return NSNumber(value: raw)
+                    }
+                }
+                if let raw = pidChild.value as? Int64 { return NSNumber(value: raw) }
+            } else if pidChild.label == "_value" || pidChild.label == "value" {
+                if let idVal = pidChild.value as? Int64 { return NSNumber(value: idVal) }
+                if let idVal = pidChild.value as? Int32 { return NSNumber(value: Int64(idVal)) }
+            }
+        }
+
+        // 2. String representation: in Telegram Swift, PeerId.description is "\(namespace):\(id)"
         let desc = String(describing: pid)
+        if let colonIndex = desc.firstIndex(of: ":") {
+            let afterColon = desc[desc.index(after: colonIndex)...]
+            if let range = afterColon.range(of: "-?\\d+", options: .regularExpression),
+               let idVal = Int64(afterColon[range]) {
+                return NSNumber(value: idVal)
+            }
+        }
+
+        // 3. Fallback regex
         if let range = desc.range(of: "-?\\d+", options: .regularExpression) {
             if let idVal = Int64(desc[range]) {
                 return NSNumber(value: idVal)
             }
         }
 
-        let pidMirror = Mirror(reflecting: pid)
-        for pidChild in pidMirror.children {
-             if pidChild.label == "id" || pidChild.label == "_value" || pidChild.label == "value" {
-                 if let idVal = pidChild.value as? Int64 { return NSNumber(value: idVal) }
-                 if let idVal = pidChild.value as? Int32 { return NSNumber(value: Int64(idVal)) }
-             }
-        }
         return nil
     }
 
@@ -2064,12 +2131,13 @@ class TLParser: NSObject {
         customLogMsg("[TLParser] extracted fileIds: \(fileIds), uniqueIds: \(uniqueIds), tempPaths: \(tempPaths)")
 
         let fm = FileManager.default
+        let minSize: UInt64 = isVideoOnly ? (40 * 1024) : 1024
 
         // 1. Check tempPaths first
         for path in tempPaths {
             if fm.fileExists(atPath: path),
                let attrs = try? fm.attributesOfItem(atPath: path),
-               let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+               let size = attrs[.size] as? UInt64, size >= minSize {
                 if !isVideoOnly || isVideoFile(atPath: path) {
                     customLogMsg("[TLParser] matched tempPath: \(path) (size: \(size))")
                     return path
@@ -2091,7 +2159,7 @@ class TLParser: NSObject {
                 let complete = (folder as NSString).appendingPathComponent(uid)
                 if fm.fileExists(atPath: complete),
                    let attrs = try? fm.attributesOfItem(atPath: complete),
-                   let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+                   let size = attrs[.size] as? UInt64, size >= minSize {
                     if !isVideoOnly || isVideoFile(atPath: complete) {
                         customLogMsg("[TLParser] matched complete uniqueId file: \(complete) (size: \(size))")
                         return complete
@@ -2100,7 +2168,7 @@ class TLParser: NSObject {
                 let partial = (folder as NSString).appendingPathComponent("\(uid)_partial")
                 if fm.fileExists(atPath: partial),
                    let attrs = try? fm.attributesOfItem(atPath: partial),
-                   let size = attrs[.size] as? UInt64, size >= 40 * 1024 {
+                   let size = attrs[.size] as? UInt64, size >= minSize {
                     let modDate = (attrs[.modificationDate] as? Date) ?? Date.distantPast
                     partialCandidates.append((path: partial, size: size, modDate: modDate))
                 }
@@ -2118,7 +2186,7 @@ class TLParser: NSObject {
                         if isVideoOnly && (item.contains("photo") || item.contains("photo-size")) { continue }
                         let full = (folder as NSString).appendingPathComponent(item)
                         guard let attrs = try? fm.attributesOfItem(atPath: full),
-                              let size = attrs[.size] as? UInt64, size >= 40 * 1024 else { continue }
+                              let size = attrs[.size] as? UInt64, size >= minSize else { continue }
 
                         if item.hasSuffix("_partial") {
                             let nonPartial = String(item.dropLast(8))
