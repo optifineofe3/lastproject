@@ -362,28 +362,6 @@ static void cleanRogueBadges(UIView *view, UIView *keepDel, UIView *keepEdit) {
     }
 }
 
-static NSString *getNodeText(ASDisplayNode *node) {
-    if (!node || !node.isNodeLoaded) return nil;
-    UIView *v = node.view;
-    if (!v) return nil;
-    NSMutableArray<UIView *> *queue = [NSMutableArray arrayWithObject:v];
-    while (queue.count > 0) {
-        UIView *cur = queue.firstObject;
-        [queue removeObjectAtIndex:0];
-        if (cur.tag == 998855 || cur.tag == 998856 || cur.tag == 998866 || cur.tag == 998811 || cur.tag == 998850) continue;
-        if ([cur isKindOfClass:[UILabel class]]) {
-            NSString *t = [(UILabel *)cur text];
-            if (t.length > 0 && ![t isEqualToString:@"DEL"] && ![t isEqualToString:@"EDT"] && ![t isEqualToString:@"EDITED"]) {
-                return t;
-            }
-        }
-        for (UIView *sub in cur.subviews) {
-            [queue addObject:sub];
-        }
-    }
-    return nil;
-}
-
 static BOOL isNodeOutgoing(ASDisplayNode *node, CGRect bFrame, CGFloat rowWidth) {
     if (!node) return NO;
     
