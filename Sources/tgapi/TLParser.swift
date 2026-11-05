@@ -720,6 +720,14 @@ class TLParser: NSObject {
         return ["msgId": id, "peerId": NSNumber(value: 0), "isOutgoing": NSNumber(value: false), "text": ""]
     }
 
+    static var deletedIds: Set<Int32> {
+        stateLock.lock()
+        loadDeletedIdsIfNeeded()
+        let ids = _deletedIds
+        stateLock.unlock()
+        return ids
+    }
+
     @objc static func isDeleted(_ msgId: NSNumber) -> Bool {
         let id = msgId.int32Value
         guard id != 0 else { return false }
@@ -733,6 +741,14 @@ class TLParser: NSObject {
     // Deleted indicator is now rendered as a visual DEL pill badge on the cell.
     private static func applyDeletedIndicator(to msgs: [Api.Message]) -> (messages: [Api.Message], changed: Bool) {
         return (msgs, false)
+    }
+
+    static var selfDestructingMessageIds: Set<Int32> {
+        stateLock.lock()
+        loadSelfDestructIfNeeded()
+        let ids = _selfDestructingMessageIds
+        stateLock.unlock()
+        return ids
     }
 
     private static func addSelfDestructingId(_ id: Int32) {
