@@ -44,6 +44,10 @@ static __weak TGLocalization *TGLocalizationShared = nil;
 %end
 
 void showUI() {
+    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    [feedback prepare];
+    [feedback impactOccurred];
+
 	TGExtra *ui = [TGExtra new];
 	UINavigationController *navVC = [[UINavigationController alloc] initWithRootViewController:ui];
 
