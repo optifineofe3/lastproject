@@ -6,14 +6,19 @@
 @interface TLParser : NSObject
 + (NSData *)handleResponse:(NSData *)data functionID:(NSNumber *)ios;
 + (void)addDeletedId:(int32_t)msgId;
++ (void)addDeletedId:(int32_t)msgId channelId:(int64_t)channelId;
 + (void)loadPersistedIds;
 + (NSNumber *)getMessageId:(id)item;
 + (NSNumber *)getMessageIdFromNode:(id)node;
++ (NSDictionary *)getMessageInfoFromNode:(id)node;
 + (NSString *)getDebugDumpFromNode:(id)node;
 + (BOOL)isDeleted:(NSNumber *)msgId;
++ (BOOL)isDeletedWithMsgId:(NSNumber *)msgId peerId:(NSNumber *)peerId;
 + (BOOL)isEdited:(NSNumber *)msgId;
++ (BOOL)isEditedWithMsgId:(NSNumber *)msgId peerId:(NSNumber *)peerId currentText:(NSString *)currentText;
 + (BOOL)isNodeEdited:(id)node;
 + (NSString *)getOriginalTextForId:(NSNumber *)msgId;
++ (NSString *)getOriginalTextForId:(NSNumber *)msgId peerId:(NSNumber *)peerId;
 + (NSArray *)getEditHistoryForNode:(id)node;
 + (NSData *)stripAntiSelfDestruct:(NSData *)data;
 + (BOOL)isMessageSelfDestructing:(NSNumber *)msgId;
