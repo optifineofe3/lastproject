@@ -23,6 +23,13 @@ class TLParser: NSObject {
     private static let dbVersionKey = "TweakDBVersion_v2"
     private static var protectedChannelIds = Set<Int64>()
 
+    // Precompiled regular expressions for fallback parsing without regex recompilation overhead
+    private static let messageIdRegex = try? NSRegularExpression(pattern: "MessageId\\(peerId: [^,]+, namespace: [^,]+, id: (\\d+)\\)", options: [])
+    private static let rawValueRegex = try? NSRegularExpression(pattern: "rawValue: \\d+\\):\\d+_(\\d+)", options: [])
+    private static let fallbackRegex = try? NSRegularExpression(pattern: "messageId: (\\d+)", options: [])
+    private static let dumpPatternRegex = try? NSRegularExpression(pattern: "MessageId.*?id: (\\d+)", options: [.dotMatchesLineSeparators])
+    private static let dumpRawValueRegex = try? NSRegularExpression(pattern: "rawValue: \\d+\\):\\d+_(\\d+)", options: [])
+
     // Dedicated database storage directory: Library/Application Support/Tweak
     private static var dbDirectoryURL: URL {
         let urls = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
