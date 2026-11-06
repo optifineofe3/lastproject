@@ -355,7 +355,6 @@ class TLParser: NSObject {
                 }
             } else if label == "editDate" {
                 if let d = extractInt32(child.value), d > 0 {
-                    info.hasEditDate = true
                     info.editDate = d
                 }
             } else if label == "attributes" {
@@ -365,7 +364,6 @@ class TLParser: NSObject {
                     let attrType = String(describing: type(of: attrVal))
                     let attrDesc = String(describing: attrVal)
                     if attrType.contains("EditedMessageAttribute") || attrDesc.contains("EditedMessageAttribute") {
-                        info.hasEditedAttribute = true
                         let attrMirror = Mirror(reflecting: attrVal)
                         var isHidden = false
                         var dateVal: Int32?
@@ -378,6 +376,7 @@ class TLParser: NSObject {
                             }
                         }
                         if !isHidden, let d = dateVal, d > 0 {
+                            info.hasEditedAttribute = true
                             if info.editDate == nil {
                                 info.editDate = d
                             }
@@ -434,11 +433,6 @@ class TLParser: NSObject {
             } else if label == "text" {
                 if info.text == nil, let t = unwrapOptional(child.value) as? String, !t.isEmpty {
                     info.text = t
-                }
-            } else if label == "editDate" {
-                if let d = extractInt32(child.value), d > 0 {
-                    info.hasEditDate = true
-                    info.editDate = d
                 }
             }
         }
@@ -551,62 +545,40 @@ class TLParser: NSObject {
         return nil
     }
 
-    private static func scanViewForEdited(_ v: UIView, depth: Int) -> Bool {
-        guard depth < 6 else { return false }
-        if v.tag == 998856 || v.tag == 998855 || v.tag == 998850 || v.tag == 998822 || v.tag == 998833 || v.tag == 998811 || v.tag == 998866 || v.tag == 998899 {
-            return false
-        }
-        if let lbl = v as? UILabel, let t = lbl.text?.lowercased() {
-            if (t.contains("edited") || t.contains("изменено") || t.contains("изм.") || t.contains("змінено")) && t != "edt" && t != "edited" && t != "del" {
-                return true
-            }
-        }
-        if let a11y = v.accessibilityLabel?.lowercased() {
-            if (a11y.contains("edited") || a11y.contains("изменено") || a11y.contains("изм.") || a11y.contains("змінено")) && a11y != "edt" && a11y != "edited" && a11y != "del" {
-                return true
-            }
-        }
-        for sub in v.subviews {
-            if scanViewForEdited(sub, depth: depth + 1) {
-                return true
-            }
-        }
-        return false
-    }
-
-    private static func checkViewsForEditedText(_ node: Any) -> Bool {
-        guard let displayNode = node as? NSObject else { return false }
-        let isLoadedSel = NSSelectorFromString("isNodeLoaded")
-        let viewSel = NSSelectorFromString("view")
-        guard displayNode.responds(to: isLoadedSel), displayNode.responds(to: viewSel) else { return false }
-        if let isLoaded = displayNode.value(forKey: "isNodeLoaded") as? Bool, isLoaded {
-            if let v = displayNode.value(forKey: "view") as? UIView {
-                return scanViewForEdited(v, depth: 0)
-            }
-        }
-        return false
-    }
-
     @objc static func isNodeEdited(_ node: Any) -> Bool {
         let info = inspectNodeModel(node)
         let finalId = info.id ?? getMessageIdFromNode(node)?.int32Value
         
-        // Priority 1: Presence of editDate on the message
-        let hasEditDate = info.hasEditDate || (info.editDate != nil && info.editDate! > 0)
+        // Priority 1: Presence of real editDate on the message (must be strictly after creation date)
+        let hasEditDate = (info.editDate != nil && info.editDate! > 0 && (info.origDate == nil || info.editDate! > info.origDate!))
         
-        // Priority 2: Presence of EditedMessageAttribute on the message
-        let hasEditedAttr = info.hasEditedAttribute
+        // Priority 2: Presence of real EditedMessageAttribute on the message (!isHidden and date > origDate)
+        let hasEditedAttr = info.hasEditedAttribute && (info.origDate == nil || (info.editDate ?? 0) > info.origDate!)
         
-        // Priority 3: ID already in _editedIds
-        let isKnownEdited = (finalId != nil && finalId! != 0 && isEdited(NSNumber(value: finalId!)))
-        
-        // Priority 4: Other stable indicators in Telegram model or view (status label / accessibility label)
-        var hasOtherSignal = false
-        if !hasEditDate && !hasEditedAttr && !isKnownEdited {
-            hasOtherSignal = checkViewsForEditedText(node)
+        // Priority 3: ID already in _editedIds (verified valid edit)
+        var isKnownEdited = false
+        if let id = finalId, id != 0, isEdited(NSNumber(value: id)) {
+            if info.origDate != nil {
+                stateLock.lock()
+                loadEditedTextsIfNeeded()
+                loadEditChainsIfNeeded()
+                let hasRealDiff = (_editedOriginalTexts[id] != nil) || ((_editChains[id]?.count ?? 0) > 1)
+                stateLock.unlock()
+                
+                if hasEditDate || hasEditedAttr || hasRealDiff {
+                    isKnownEdited = true
+                } else {
+                    // Stale / false-positive ID from old heuristics: clean it up
+                    stateLock.lock()
+                    _editedIds.remove(id)
+                    stateLock.unlock()
+                }
+            } else {
+                isKnownEdited = true
+            }
         }
         
-        let isEdit = hasEditDate || hasEditedAttr || isKnownEdited || hasOtherSignal
+        let isEdit = hasEditDate || hasEditedAttr || isKnownEdited
         
         if isEdit {
             if let id = finalId, id != 0 {
@@ -1169,10 +1141,10 @@ class TLParser: NSObject {
             return (apiMsg, false)
         }
         
-        if data.editDate == nil {
-            recordOriginalMessage(id: data.id, text: data.message, date: data.date)
+        if let editDate = data.editDate, editDate > data.date {
+            recordEditedMessage(id: data.id, newText: data.message, date: editDate)
         } else {
-            recordEditedMessage(id: data.id, newText: data.message, date: data.editDate)
+            recordOriginalMessage(id: data.id, text: data.message, date: data.date)
         }
 
         guard isNoForwardsBypassActive || 
@@ -1272,7 +1244,9 @@ class TLParser: NSObject {
             return (.updateNewChannelMessage(Api.Update.Cons_updateNewChannelMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
         case let .updateEditMessage(data):
             if case let .message(msgData) = data.message {
-                recordEditedMessage(id: msgData.id, newText: msgData.message)
+                if let editDate = msgData.editDate, editDate > msgData.date {
+                    recordEditedMessage(id: msgData.id, newText: msgData.message, date: editDate)
+                }
             }
             let (strippedMsg, changed) = stripTTLMessage(data.message)
             if !changed {
@@ -1281,7 +1255,9 @@ class TLParser: NSObject {
             return (.updateEditMessage(Api.Update.Cons_updateEditMessage(message: strippedMsg, pts: data.pts, ptsCount: data.ptsCount)), true)
         case let .updateEditChannelMessage(data):
             if case let .message(msgData) = data.message {
-                recordEditedMessage(id: msgData.id, newText: msgData.message)
+                if let editDate = msgData.editDate, editDate > msgData.date {
+                    recordEditedMessage(id: msgData.id, newText: msgData.message, date: editDate)
+                }
             }
             let (strippedMsg, changed) = stripTTLMessage(data.message)
             if !changed {
