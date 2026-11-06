@@ -228,7 +228,7 @@ class TLParser: NSObject {
         }
     }
 
-    @objc static func recordEditedMessage(id: Int32, newText: String) {
+    static func recordEditedMessage(id: Int32, newText: String, date: Int32?) {
         guard id != 0 else { return }
         var isNewEdit = false
         stateLock.lock()
@@ -244,7 +244,7 @@ class TLParser: NSObject {
             _editedOriginalTexts[id] = orig
         }
         if !newText.isEmpty {
-            appendEditChainLocked(id: id, text: newText, date: nil)
+            appendEditChainLocked(id: id, text: newText, date: date)
         }
         stateLock.unlock()
 
@@ -259,6 +259,10 @@ class TLParser: NSObject {
                 NotificationCenter.default.post(name: NSNotification.Name("LeadMessageEditedRealtime"), object: nil, userInfo: ["ids": [NSNumber(value: id)]])
             }
         }
+    }
+
+    @objc static func recordEditedMessage(id: Int32, newText: String) {
+        recordEditedMessage(id: id, newText: newText, date: nil)
     }
 
     @objc static func isEdited(_ msgId: NSNumber) -> Bool {
@@ -302,43 +306,176 @@ class TLParser: NSObject {
         return any
     }
 
-    private static func extractIdFromMessage(_ msg: Any) -> Int32? {
-        let unwrapped = unwrapOptional(msg)
-        let msgMirror = Mirror(reflecting: unwrapped)
-        for msgChild in msgMirror.children {
-            if msgChild.label == "id" {
-                let idMirror = Mirror(reflecting: unwrapOptional(msgChild.value))
-                for idChild in idMirror.children {
-                    if idChild.label == "id", let idVal = idChild.value as? Int32 {
-                        return idVal
-                    }
-                }
-            }
-        }
+    private struct MessageModelInfo {
+        var id: Int32?
+        var editDate: Int32?
+        var origDate: Int32?
+        var text: String?
+        var hasEditDate: Bool = false
+        var hasEditedAttribute: Bool = false
+    }
+
+    private static func extractInt32(_ val: Any) -> Int32? {
+        let unwrapped = unwrapOptional(val)
+        if let v = unwrapped as? Int32 { return v }
+        if let v = unwrapped as? Int { return Int32(v) }
+        if let v = unwrapped as? NSNumber { return v.int32Value }
+        if let v = unwrapped as? UInt32 { return Int32(v) }
+        if let v = unwrapped as? Double { return Int32(v) }
         return nil
     }
 
-    @objc static func getMessageId(from item: Any) -> NSNumber? {
-        let unwrapped = unwrapOptional(item)
+    private static func inspectMessageObject(_ msg: Any, into info: inout MessageModelInfo) {
+        let unwrapped = unwrapOptional(msg)
         let mirror = Mirror(reflecting: unwrapped)
+        
         for child in mirror.children {
-            if child.label == "message" || child.label == "firstMessage" {
-                if let idVal = extractIdFromMessage(child.value) {
-                    return NSNumber(value: idVal)
+            let label = child.label ?? ""
+            if label == "id" {
+                if info.id == nil {
+                    if let directId = extractInt32(child.value) {
+                        info.id = directId
+                    } else {
+                        let idMirror = Mirror(reflecting: unwrapOptional(child.value))
+                        for idChild in idMirror.children {
+                            if idChild.label == "id", let idVal = extractInt32(idChild.value) {
+                                info.id = idVal
+                                break
+                            }
+                        }
+                    }
                 }
-            } else if child.label == "content" {
-                let contentMirror = Mirror(reflecting: unwrapOptional(child.value))
-                for cChild in contentMirror.children {
-                    if cChild.label == "firstMessage" || cChild.label == "message" {
-                        if let idVal = extractIdFromMessage(cChild.value) {
-                            return NSNumber(value: idVal)
+            } else if label == "text" {
+                if info.text == nil, let t = unwrapOptional(child.value) as? String, !t.isEmpty {
+                    info.text = t
+                }
+            } else if label == "timestamp" {
+                if info.origDate == nil, let ts = extractInt32(child.value), ts > 0 {
+                    info.origDate = ts
+                }
+            } else if label == "editDate" {
+                if let d = extractInt32(child.value), d > 0 {
+                    info.hasEditDate = true
+                    info.editDate = d
+                }
+            } else if label == "attributes" {
+                let attrsMirror = Mirror(reflecting: unwrapOptional(child.value))
+                for attrChild in attrsMirror.children {
+                    let attrVal = unwrapOptional(attrChild.value)
+                    let attrType = String(describing: type(of: attrVal))
+                    let attrDesc = String(describing: attrVal)
+                    if attrType.contains("EditedMessageAttribute") || attrDesc.contains("EditedMessageAttribute") {
+                        info.hasEditedAttribute = true
+                        let attrMirror = Mirror(reflecting: attrVal)
+                        var isHidden = false
+                        var dateVal: Int32?
+                        for aChild in attrMirror.children {
+                            let aLabel = aChild.label ?? ""
+                            if aLabel == "date" {
+                                dateVal = extractInt32(aChild.value)
+                            } else if aLabel == "isHidden", let h = unwrapOptional(aChild.value) as? Bool {
+                                isHidden = h
+                            }
+                        }
+                        if !isHidden, let d = dateVal, d > 0 {
+                            if info.editDate == nil {
+                                info.editDate = d
+                            }
                         }
                     }
                 }
             }
         }
+    }
 
-        let desc = String(describing: unwrapped)
+    private static func inspectItemObject(_ item: Any, into info: inout MessageModelInfo) {
+        let unwrapped = unwrapOptional(item)
+        let mirror = Mirror(reflecting: unwrapped)
+        
+        for child in mirror.children {
+            let label = child.label ?? ""
+            if label == "message" || label == "firstMessage" {
+                inspectMessageObject(child.value, into: &info)
+            } else if label == "content" {
+                let contentMirror = Mirror(reflecting: unwrapOptional(child.value))
+                for cChild in contentMirror.children {
+                    let cVal = unwrapOptional(cChild.value)
+                    inspectMessageObject(cVal, into: &info)
+                    
+                    let cValMirror = Mirror(reflecting: cVal)
+                    for tChild in cValMirror.children {
+                        let tLabel = tChild.label ?? ""
+                        if tLabel == "message" || tLabel == "firstMessage" || tLabel == ".0" || tLabel == "0" {
+                            inspectMessageObject(tChild.value, into: &info)
+                        } else if tLabel == "messages" {
+                            let msgsMirror = Mirror(reflecting: unwrapOptional(tChild.value))
+                            for mElem in msgsMirror.children {
+                                let elemVal = unwrapOptional(mElem.value)
+                                inspectMessageObject(elemVal, into: &info)
+                                let elemMirror = Mirror(reflecting: elemVal)
+                                for emChild in elemMirror.children {
+                                    if emChild.label == "message" || emChild.label == ".0" {
+                                        inspectMessageObject(emChild.value, into: &info)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if label == "messages" {
+                let msgsMirror = Mirror(reflecting: unwrapOptional(child.value))
+                for mElem in msgsMirror.children {
+                    inspectMessageObject(mElem.value, into: &info)
+                }
+            } else if label == "id" {
+                if info.id == nil, let idVal = extractInt32(child.value) {
+                    info.id = idVal
+                }
+            } else if label == "text" {
+                if info.text == nil, let t = unwrapOptional(child.value) as? String, !t.isEmpty {
+                    info.text = t
+                }
+            } else if label == "editDate" {
+                if let d = extractInt32(child.value), d > 0 {
+                    info.hasEditDate = true
+                    info.editDate = d
+                }
+            }
+        }
+    }
+
+    private static func inspectNodeModel(_ node: Any) -> MessageModelInfo {
+        var info = MessageModelInfo()
+        var currentMirror: Mirror? = Mirror(reflecting: node)
+        var depth = 0
+        while let mirror = currentMirror, depth < 4 {
+            for child in mirror.children {
+                let lbl = child.label ?? ""
+                if lbl == "appliedItem" || lbl == "item" || lbl == "currentInputParams" {
+                    inspectItemObject(child.value, into: &info)
+                    if info.hasEditDate || info.hasEditedAttribute {
+                        return info
+                    }
+                } else if lbl == "message" || lbl == "firstMessage" {
+                    inspectMessageObject(child.value, into: &info)
+                    if info.hasEditDate || info.hasEditedAttribute {
+                        return info
+                    }
+                }
+            }
+            depth += 1
+            currentMirror = mirror.superclassMirror
+        }
+        return info
+    }
+
+    @objc static func getMessageId(from item: Any) -> NSNumber? {
+        var info = MessageModelInfo()
+        inspectItemObject(item, into: &info)
+        if let id = info.id {
+            return NSNumber(value: id)
+        }
+        let desc = String(describing: unwrapOptional(item))
         let nsRange = NSRange(desc.startIndex..<desc.endIndex, in: desc)
         if let regex = msgIdRegex, let match = regex.firstMatch(in: desc, options: [], range: nsRange) {
             if let idRange = Range(match.range(at: 1), in: desc), let id = Int32(desc[idRange]) {
@@ -359,6 +496,10 @@ class TLParser: NSObject {
     }
 
     @objc static func getMessageIdFromNode(_ node: Any) -> NSNumber? {
+        let info = inspectNodeModel(node)
+        if let id = info.id {
+            return NSNumber(value: id)
+        }
         var currentMirror: Mirror? = Mirror(reflecting: node)
         while let mirror = currentMirror {
             for child in mirror.children {
@@ -374,104 +515,121 @@ class TLParser: NSObject {
         return nil
     }
 
-    private static func checkEditedAttribute(inNode node: Any) -> Bool {
-        var currentMirror: Mirror? = Mirror(reflecting: node)
-        while let mirror = currentMirror {
-            for child in mirror.children {
-                let lbl = child.label ?? ""
-                if lbl == "appliedItem" || lbl == "item" || lbl == "currentInputParams" {
-                    if checkEditedAttribute(inItem: child.value) {
-                        return true
-                    }
-                }
-            }
-            currentMirror = mirror.superclassMirror
+    private static func scanViewForText(_ v: UIView, depth: Int) -> String? {
+        guard depth < 6 else { return nil }
+        if v.tag == 998856 || v.tag == 998855 || v.tag == 998850 || v.tag == 998822 || v.tag == 998833 || v.tag == 998811 || v.tag == 998866 || v.tag == 998899 {
+            return nil
         }
-        return false
-    }
-
-    private static func checkEditedAttribute(inItem item: Any) -> Bool {
-        let unwrapped = unwrapOptional(item)
-        let mirror = Mirror(reflecting: unwrapped)
-        for child in mirror.children {
-            if child.label == "message" || child.label == "firstMessage" {
-                if checkEditedAttribute(inMessage: child.value) {
-                    return true
-                }
-            } else if child.label == "content" {
-                let contentMirror = Mirror(reflecting: unwrapOptional(child.value))
-                for cChild in contentMirror.children {
-                    if cChild.label == "firstMessage" || cChild.label == "message" {
-                        if checkEditedAttribute(inMessage: cChild.value) {
-                            return true
-                        }
-                    }
-                }
+        if let lbl = v as? UILabel, let t = lbl.text, !t.isEmpty, t.count > 1 {
+            let lower = t.lowercased()
+            if !lower.contains("edited") && !lower.contains("изменено") && !lower.contains("изм.") && !lower.contains("змінено") && lower != "edt" && lower != "del" && !(t.count <= 8 && t.contains(":")) {
+                return t
             }
         }
-        return false
-    }
-
-    private static func checkEditedAttribute(inMessage msg: Any) -> Bool {
-        let unwrapped = unwrapOptional(msg)
-        let mirror = Mirror(reflecting: unwrapped)
-        for child in mirror.children {
-            if child.label == "attributes" {
-                let attrsMirror = Mirror(reflecting: unwrapOptional(child.value))
-                for attr in attrsMirror.children {
-                    let attrType = String(describing: type(of: attr.value))
-                    if attrType.contains("EditedMessageAttribute") {
-                        return true
-                    }
-                }
+        for sub in v.subviews {
+            if let t = scanViewForText(sub, depth: depth + 1) {
+                return t
             }
         }
-        return false
+        return nil
     }
 
     private static func extractText(fromNode node: Any) -> String? {
-        var currentMirror: Mirror? = Mirror(reflecting: node)
-        while let mirror = currentMirror {
-            for child in mirror.children {
-                let lbl = child.label ?? ""
-                if lbl == "appliedItem" || lbl == "item" || lbl == "currentInputParams" {
-                    if let t = extractText(fromItem: child.value) {
-                        return t
-                    }
-                }
+        let info = inspectNodeModel(node)
+        if let t = info.text, !t.isEmpty {
+            return t
+        }
+        guard let displayNode = node as? NSObject else { return nil }
+        let isLoadedSel = NSSelectorFromString("isNodeLoaded")
+        let viewSel = NSSelectorFromString("view")
+        guard displayNode.responds(to: isLoadedSel), displayNode.responds(to: viewSel) else { return nil }
+        if let isLoaded = displayNode.value(forKey: "isNodeLoaded") as? Bool, isLoaded {
+            if let v = displayNode.value(forKey: "view") as? UIView {
+                return scanViewForText(v, depth: 0)
             }
-            currentMirror = mirror.superclassMirror
         }
         return nil
     }
 
-    private static func extractText(fromItem item: Any) -> String? {
-        let unwrapped = unwrapOptional(item)
-        let mirror = Mirror(reflecting: unwrapped)
-        for child in mirror.children {
-            if child.label == "message" || child.label == "firstMessage" {
-                let msgMirror = Mirror(reflecting: unwrapOptional(child.value))
-                for mChild in msgMirror.children {
-                    if mChild.label == "text", let t = mChild.value as? String, !t.isEmpty {
-                        return t
-                    }
-                }
+    private static func scanViewForEdited(_ v: UIView, depth: Int) -> Bool {
+        guard depth < 6 else { return false }
+        if v.tag == 998856 || v.tag == 998855 || v.tag == 998850 || v.tag == 998822 || v.tag == 998833 || v.tag == 998811 || v.tag == 998866 || v.tag == 998899 {
+            return false
+        }
+        if let lbl = v as? UILabel, let t = lbl.text?.lowercased() {
+            if (t.contains("edited") || t.contains("изменено") || t.contains("изм.") || t.contains("змінено")) && t != "edt" && t != "edited" && t != "del" {
+                return true
             }
         }
-        return nil
+        if let a11y = v.accessibilityLabel?.lowercased() {
+            if (a11y.contains("edited") || a11y.contains("изменено") || a11y.contains("изм.") || a11y.contains("змінено")) && a11y != "edt" && a11y != "edited" && a11y != "del" {
+                return true
+            }
+        }
+        for sub in v.subviews {
+            if scanViewForEdited(sub, depth: depth + 1) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func checkViewsForEditedText(_ node: Any) -> Bool {
+        guard let displayNode = node as? NSObject else { return false }
+        let isLoadedSel = NSSelectorFromString("isNodeLoaded")
+        let viewSel = NSSelectorFromString("view")
+        guard displayNode.responds(to: isLoadedSel), displayNode.responds(to: viewSel) else { return false }
+        if let isLoaded = displayNode.value(forKey: "isNodeLoaded") as? Bool, isLoaded {
+            if let v = displayNode.value(forKey: "view") as? UIView {
+                return scanViewForEdited(v, depth: 0)
+            }
+        }
+        return false
     }
 
     @objc static func isNodeEdited(_ node: Any) -> Bool {
-        guard let idNum = getMessageIdFromNode(node) else { return false }
-        if isEdited(idNum) {
+        let info = inspectNodeModel(node)
+        let finalId = info.id ?? getMessageIdFromNode(node)?.int32Value
+        
+        // Priority 1: Presence of editDate on the message
+        let hasEditDate = info.hasEditDate || (info.editDate != nil && info.editDate! > 0)
+        
+        // Priority 2: Presence of EditedMessageAttribute on the message
+        let hasEditedAttr = info.hasEditedAttribute
+        
+        // Priority 3: ID already in _editedIds
+        let isKnownEdited = (finalId != nil && finalId! != 0 && isEdited(NSNumber(value: finalId!)))
+        
+        // Priority 4: Other stable indicators in Telegram model or view (status label / accessibility label)
+        var hasOtherSignal = false
+        if !hasEditDate && !hasEditedAttr && !isKnownEdited {
+            hasOtherSignal = checkViewsForEditedText(node)
+        }
+        
+        let isEdit = hasEditDate || hasEditedAttr || isKnownEdited || hasOtherSignal
+        
+        if isEdit {
+            if let id = finalId, id != 0 {
+                let textToRecord = info.text ?? extractText(fromNode: node) ?? ""
+                recordEditedMessage(id: id, newText: textToRecord, date: info.editDate)
+            }
             return true
         }
-        return checkEditedAttribute(inNode: node)
+        
+        // Unedited: record original text and date for edit tracking if subsequently edited
+        if let id = finalId, id != 0 {
+            if let cur = info.text ?? extractText(fromNode: node), !cur.isEmpty {
+                recordOriginalMessage(id: id, text: cur, date: info.origDate)
+            }
+        }
+        
+        return false
     }
 
     @objc static func getEditHistoryForNode(_ node: Any) -> NSArray {
-        let id = getMessageIdFromNode(node)?.int32Value ?? 0
-        let currentText = extractText(fromNode: node)
+        let info = inspectNodeModel(node)
+        let id = info.id ?? getMessageIdFromNode(node)?.int32Value ?? 0
+        let currentText = info.text ?? extractText(fromNode: node)
         
         let df = DateFormatter()
         df.dateFormat = "HH:mm:ss"
@@ -496,7 +654,8 @@ class TLParser: NSObject {
             stateLock.unlock()
         }
 
-        let resolvedOrigTime = Int32(Date().timeIntervalSince1970 - 60)
+        let resolvedOrigTime = info.origDate ?? Int32(Date().timeIntervalSince1970 - 60)
+        let resolvedEditTime = info.editDate ?? Int32(Date().timeIntervalSince1970)
 
         if let o = origText, !o.isEmpty {
             if chain.isEmpty {
@@ -506,7 +665,7 @@ class TLParser: NSObject {
                 ])
                 if let cur = currentText, !cur.isEmpty, cur != o {
                     chain.append([
-                        "date": Int32(Date().timeIntervalSince1970),
+                        "date": resolvedEditTime,
                         "text": cur
                     ])
                 }
@@ -520,7 +679,7 @@ class TLParser: NSObject {
                 if let cur = currentText, !cur.isEmpty {
                     if let lastText = chain.last?["text"] as? String, lastText != cur {
                         chain.append([
-                            "date": Int32(Date().timeIntervalSince1970),
+                            "date": resolvedEditTime,
                             "text": cur
                         ])
                     }
@@ -529,7 +688,7 @@ class TLParser: NSObject {
         } else if let cur = currentText, !cur.isEmpty {
             if chain.isEmpty {
                 chain.append([
-                    "date": Int32(Date().timeIntervalSince1970),
+                    "date": resolvedEditTime,
                     "text": cur
                 ])
             }
@@ -563,7 +722,7 @@ class TLParser: NSObject {
         }
 
         if list.isEmpty {
-            let timeStr = formatBadge(Int32(Date().timeIntervalSince1970))
+            let timeStr = formatBadge(resolvedEditTime)
             list.append([
                 "badge": timeStr,
                 "label": "Edited",
@@ -1013,7 +1172,7 @@ class TLParser: NSObject {
         if data.editDate == nil {
             recordOriginalMessage(id: data.id, text: data.message, date: data.date)
         } else {
-            recordEditedMessage(id: data.id, newText: data.message)
+            recordEditedMessage(id: data.id, newText: data.message, date: data.editDate)
         }
 
         guard isNoForwardsBypassActive || 

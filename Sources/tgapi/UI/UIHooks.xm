@@ -414,7 +414,10 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
     // Always fetch fresh msgId directly from the node's current model (handles cell reuse correctly)
     NSNumber *msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
     BOOL isDel = (msgId != nil && [NSClassFromString(@"TLParser") isDeleted:msgId]);
-    BOOL isEdit = (msgId != nil && [NSClassFromString(@"TLParser") isNodeEdited:node]);
+    BOOL isEdit = [NSClassFromString(@"TLParser") isNodeEdited:node];
+    if (isEdit && !msgId) {
+        msgId = [NSClassFromString(@"TLParser") getMessageIdFromNode:node];
+    }
 
     // Fast path: if unedited and undeleted, hide existing badges and exit instantly (smooth 120 FPS scrolling)
     uint64_t msgIdVal = msgId ? [msgId unsignedIntValue] : 0;
@@ -480,6 +483,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         if (msgId) {
             objc_setAssociatedObject(delBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
+        objc_setAssociatedObject(delBadge, "TweakBadgeNode", node, OBJC_ASSOCIATION_ASSIGN);
     } else {
         if (delBadge) delBadge.hidden = YES;
     }
@@ -505,6 +509,7 @@ static void updateDeletedBadgeForNode(ASDisplayNode *node) {
         if (msgId) {
             objc_setAssociatedObject(editBadge, "TweakBadgeMsgId", msgId, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
+        objc_setAssociatedObject(editBadge, "TweakBadgeNode", node, OBJC_ASSOCIATION_ASSIGN);
     } else {
         if (editBadge) editBadge.hidden = YES;
     }
